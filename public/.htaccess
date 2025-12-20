@@ -1,0 +1,13 @@
+# Turn off MultiViews so URIs map directly to files
+Options -MultiViews
+
+RewriteEngine On
+RewriteBase /
+
+# 1) If the request is for an existing file or directory, serve it as-is:
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# 2) Otherwise, fall back to index.html (your SPA entrypoint)
+RewriteRule . index.html [L]

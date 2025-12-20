@@ -1,0 +1,219 @@
+:root {
+  --sidebar-bg-gradient: rgba(28, 50, 91, 1);
+  --menu-title: #dedede;
+  --menu-title-hover: white;
+  --menu-active-color: white;
+  --menu-active-hover-color: black;
+  --menu-active-background-color: rgba(255, 255, 255, 0.15);
+  --kt-primary: #336699;
+  --kt-primary-active: #224466;
+}
+
+body {
+  overflow: scroll; /* Allow scrolling */
+}
+
+/* Hides the scrollbar for WebKit browsers */
+body::-webkit-scrollbar {
+  display: none;
+}
+
+.app-sidebar {
+  background: var(--sidebar-bg-gradient) !important;
+}
+
+/* === GENERAL MENU STYLES === */
+
+/* Arrow for dropdown menus */
+.app-sidebar .menu .menu-item.has-sub .menu-link .menu-arrow:after {
+  content: "▼";
+  font-family: 'Font Awesome 5 Free' !important;
+  font-weight: 900 !important;
+  font-size: 12px;
+  display: block !important;
+  color: var(--menu-title);
+  transition: all 0.3s ease;
+}
+
+.app-sidebar .menu .menu-item.has-sub .menu-link .menu-arrow:hover:after {
+  color: var(--menu-title-hover);
+}
+
+.app-sidebar .menu .menu-item.has-sub.show > .menu-link .menu-arrow:after {
+  transform: rotate(180deg);
+}
+
+/* Styles for all menu titles */
+.app-sidebar .menu .menu-item .menu-link .menu-title {
+  color: var(--menu-title) !important;
+  transition: all 0.3s ease;
+}
+
+.app-sidebar .menu .menu-item .menu-link .menu-title:hover {
+  color: var(--menu-title-hover) !important;
+}
+
+/* === ACTIVE MENU ITEM STYLES === */
+
+/* Base style for an active menu link */
+.app-sidebar .menu .menu-item .menu-link.active {
+  background-color: var(--menu-active-background-color) !important;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 16px;
+}
+
+.app-sidebar .menu .menu-item .menu-link.active .menu-title {
+  color: var(--menu-active-color) !important;
+}
+
+.app-sidebar .menu .menu-item .menu-link.active .menu-bullet .bullet {
+  background-color: var(--menu-active-color) !important;
+}
+
+/* === REFACTORED & FIXED: MINIMIZED SIDEBAR STYLES === */
+
+/*
+  This single block now handles the ACTIVE link when the sidebar is minimized.
+  It applies consistently, whether hovered or not, to prevent any shifting.
+*/
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar .menu .menu-item .menu-link.active {
+  width: 48px !important;
+  height: 48px !important;
+  padding: 0 !important;
+  margin-left: 3px !important;
+  justify-content: center !important;
+}
+
+/* This positions the icon and SVG correctly and consistently */
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar .menu .menu-item .menu-link.active .menu-icon {
+  padding-left: 15px !important;
+}
+
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar .menu .menu-item .menu-link.active svg {
+  transform: translateX(-4px) !important; /* Changed from 4px to -4px to move the icon left */
+}
+
+/* When minimized, hide title/arrow on ALL links by default */
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar:not(:hover) .menu-link .menu-title,
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar:not(:hover) .menu-link .menu-arrow {
+  display: none;
+}
+
+/* When minimized and hovered, HIDE the title/arrow for the ACTIVE link specifically */
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar:hover .menu .menu-item .menu-link.active .menu-title,
+body[data-kt-app-sidebar-minimize="on"] .app-sidebar:hover .menu .menu-item .menu-link.active .menu-arrow {
+  display: none !important;
+}
+
+/* === EXPANDED SIDEBAR STYLES === */
+
+/* Restore active link styles when sidebar is not minimized */
+body:not([data-kt-app-sidebar-minimize="on"]) .app-sidebar .menu .menu-item .menu-link.active {
+  width: auto !important;
+  padding: 12px 16px !important;
+}
+
+/* === LAYOUT, LOGO & RESPONSIVE === */
+
+/* Consolidated menu padding */
+.app-sidebar .menu {
+  padding: 0 15px 0 8px !important;
+  margin: 0;
+}
+
+.app-sidebar .menu-item .menu-content {
+  padding: 0;
+  margin-top: -10px;
+}
+
+.app-sidebar-logo-default {
+  width: 75px;
+  padding: 10px;
+  height: 100% !important;
+}
+
+.app-sidebar-logo-minimize {
+  width: 40px;
+  padding: 0;
+  height: 100% !important;
+}
+
+@media only screen and (max-width: 992px) {
+  .app-header {
+    display: inline-grid;
+  }
+
+  .cp_mobile_logo {
+    width: 70px;
+    height: 100% !important;
+  }
+}
+
+/* === HOVER STYLES FOR NON-DROPDOWN ACTIVE LINKS === */
+
+/* Prevents style changes on hover for an active link that is not a dropdown */
+.menu-link.without-sub.active:hover,
+.menu-link.without-sub.active:focus,
+.menu-link.without-sub.active:active {
+  background-color: var(--menu-active-background-color) !important;
+  color: var(--menu-active-color) !important;
+  border-radius: 12px !important;
+  padding: 12px 16px !important;
+}
+
+.menu-link.without-sub.active .menu-title:hover {
+  color: var(--menu-active-color) !important;
+}
+
+/* //for scroll in resthours */
+
+/* blocks body cells from sliding under frozen columns */
+.rh-scroll{
+  /* JS will set this per-table: --rh-freeze-w: 'WIDTHpx' */
+  position: relative;
+  overflow-x: auto;
+}
+
+/* the mask itself (no hard color; uses theme vars if present) */
+.rh-scroll::before{
+  content:"";
+  position: sticky;
+  left: 0;
+  top: 0;
+  height: 100%;
+  width: var(--rh-freeze-w, 0px);
+  background: var(--rh-mask, var(--bs-body-bg, #fff));
+  border-right: 1px solid var(--bs-border-color, #dee2e6);
+  z-index: 9;                /* above normal cells, below sticky cells */
+  pointer-events: none;
+  display: block;
+}
+
+/* draw a clean vertical rule over everything at the end of frozen block */
+.rh-freeze-end::after{
+  content:"";
+  position:absolute;
+  right:-1px;
+  top:0;
+  bottom:0;
+  width:1px;
+  background: var(--bs-border-color, #dee2e6);
+  z-index: 99;               /* always on top */
+  pointer-events:none;
+}
+
+/* (optional) soft shadow to hint separation */
+.rh-freeze-end::before{
+  content:"";
+  position:absolute;
+  right:0;
+  top:0;
+  bottom:0;
+  width:12px;
+  box-shadow: 8px 0 12px rgba(0,0,0,.04);
+  z-index: 9;
+  pointer-events:none;
+}
