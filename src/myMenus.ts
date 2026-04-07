@@ -36,6 +36,7 @@ const ensureHome = (groups: MenuGroup[]): MenuGroup[] => {
  * We still use these for all roles except operator (roleId === 6),
  * and as a fallback if the API fails.
  */
+
 // Configuration for 3rd level menu filtering (nested submenus)
 const roleNestedAccess: {
   [roleId: string]: {
@@ -101,9 +102,10 @@ const roleAccess: {
     'Work & Hours': ['Rest Hour Management', 'Overtime Entry'],
     Financials: ['Allotment', 'Deductions', 'Portage Bill', 'Reimbursement', 'HRA Allowance'],
     Training: ['Training Tracker', 'Appraisals'],
-    Technical: ['Machinery', 'Procurement', 'Inventory', 'Defects List'],
+    Technical: ['Machinery','PMS', 'Procurement', 'Inventory', 'Defects List'],
     QHSE: ['Document Library','Vessel Certificates' ,'Manuals and Plans',
      'Defects List',
+     'Forms & Checklists',
      'Vessel Audits',
      'Vessel Inspection',
      'Near Miss reports',
@@ -118,19 +120,9 @@ const roleAccess: {
     Home: [],
     Operations: ['Position Reports', "Voyage Reports",'Cargo Operations',  'Defects List',],
     Crewing: ['Crew List', 'Crew Onboard', 'Crew Resthours and Overtime',],
-    // Crewingtest: [
-    //   'Crew Management',
-    //   'Crew Resthours and Overtime',
-    //   'Crew Wages and Portage Bills',
-    //   'Assessment and Training',
-    //   'Crew Management',
-    //   'Crew Listing',
-    //   'Crew Assignment',
-    // ],
-    Technical: ['Procurement', 'Inventory', 'Defects List',],
-   QHSE: ['Document Library','Vessel Certificates' ,'Manuals and Plans' , 'Defects List','Vessel Inspection','Vessel Audits','Near Miss reports',
-      'Risk Assessment Form',],
-  //  Procurement: [
+    Technical: ['Procurement', 'Inventory', 'PMS', 'Defects List',],
+   QHSE: ['Document Library','Forms & Checklists','Vessel Certificates' ,'Manuals and Plans' , 'Defects List','Vessel Inspection','Vessel Audits','Near Miss reports', 'Risk Assessment Form'],
+  //   Procurement: [
   //   'Overview',
   //   'Requisitions',
   //   'Approvals',
@@ -144,7 +136,7 @@ const roleAccess: {
   //   'Inventory',
   //   'User Management'
   // ],
-    // Accounts: [],
+  // Accounts: [],
     // HR: [],
     // Admin: [],
   },
@@ -179,9 +171,10 @@ const roleAccess: {
     //   'Crew Listing',
     //   'Crew Assignment',
     // ],
-    Technical: ['Procurement', 'Inventory', 'Defects List',],
-   QHSE: ['Document Library','Vessel Certificates' ,'Manuals and Plans','Defects List','Vessel Inspection',
-    'Vessel Audits','Near Miss reports',
+    Technical: ['Machinery', 'PMS', 'Procurement', 'Inventory', 'Defects List',],
+   QHSE: ['Document Library','Forms & Checklists','Vessel Certificates' ,'Manuals and Plans','Defects List','Vessel Inspection',
+    'Vessel Audits',
+  'Near Miss reports',
       'Risk Assessment Form', ],
     Accounts: [],
     // HR: [],
@@ -192,7 +185,7 @@ const roleAccess: {
     Home: [],
     // Operations: ['Library'],
     Admin: ['Vessels'],
-    Operations: ['Position Reports', 'Library', 'Voyage Reports','Cargo Operations',  'Defects List',],
+    Operations: ['Position Reports', 'Library', 'Voyage Reports', 'Cargo Operations', 'Defects List',],
     // Procurement: ['Requisitions', 'Purchase Orders', 'Vendors', 'Inventory'],
     Crewing: [
       'Overview',
@@ -217,52 +210,35 @@ const roleAccess: {
     //   'Crew Listing',
     //   'Crew Assignment',
     // ],
-    Technical: ['Procurement', 'Inventory','Defects List',],
-    QHSE: ['Document Library','Vessel Certificates' ,'Manuals and Plans','Defects List','Vessel Inspection',
-      'Vessel Audits', 'Near Miss reports',
-      'Risk Assessment Form',],
+    Technical: ['Machinery', 'PMS', 'Procurement', 'Inventory','Defects List',],
+    QHSE: ['Document Library','Forms & Checklists','Vessel Certificates' ,'Manuals and Plans','Defects List','Vessel Inspection',
+      'Vessel Audits',
+    'Near Miss reports',
+      'Risk Assessment Form', ],
     Accounts: [],
     // HR: [],
     // Admin: [],
   },
-
-   // Operator (role 6) — kept only as a fallback if API fails
-  '6': {
+  // Additional Role
+'6': {
     Home: [],
-  //   Admin: ['Sub-Companies', 'Vessels'],
-  //   Operations: ['Voyage Reports'],
-  //   // Procurement: ['Requisitions', 'Purchase Orders', 'Vendors', 'Inventory'],
-  //   Crewing: [
-  //     'Overview',
-  //     'Crew Assignment',
-  //     // 'Rest Hours',
-  //     'Crew Resthours and Overtime',
-  //     'Crew Overtime',
-  //     'Crew Allotment',
-  //     'Crew Advance',
-  //     'Crew Claims',
-  //     'Appraisal',
-  //     'Crew Training',
-  //     'Crew Complaints',
-  //     'Crew Test & Verification',
-  //   ],
-  //   // Crewingtest: [
-  //   //   'Crew Management',
-  //   //   'Crew Resthours and Overtime',
-  //   //   'Crew Wages and Portage Bills',
-  //   //   'Assessment and Training',
-  //   //   'Crew Management',
-  //   //   'Crew Listing',
-  //   //   'Crew Assignment',
-  //   // ],
-  // //   Technical: [],
-  //  QHSE: ['Document Library','Vessel Certificates'],
-  // //   Accounts: [],
-  //   // HR: [],
-  //   // Admin: [],
+    // Admin: ['Sub-Companies', 'Vessels'],
+    // Operations: ["Voyage Reports"],
+    // // Procurement: ['Requisitions', 'Purchase Orders', 'Vendors', 'Inventory'],
+    // Crewing: ['Overview', "Crew Assignment", 
+    //   // 'Rest Hours',
+    //   'Crew Resthours and Overtime',
+    //    "Crew Overtime",
+    //   "Crew Allotment", "Crew Advance", "Crew Claims", "Appraisal", "Crew Training",
+    //   "Crew Complaints", "Crew Test & Verification"],
+    // // Technical: [],
+    // QHSE: ['Document Library','Vessel Certificates'],
+    // // Accounts: [],
+    // // HR: [],
+    // // Admin: [],
   },
-  
-}
+};
+
 
 const allMenus: MenuGroup[] = [
   {
@@ -289,38 +265,38 @@ const allMenus: MenuGroup[] = [
         // ]
       },
 
-      // {
-      //   name: 'Procurement',
-      //   svg_location: 'menu',
-      //   icon: 'Technical',
-      //   route: '/procurement',
-      //   submenu: [
-      //     {
-      //       name: 'Requisitions',
-      //       svg_location: '',
-      //       icon: '',
-      //       route: '/procurement/requisition',
-      //     },
-      //     {
-      //       name: 'Purchase Orders',
-      //       svg_location: '',
-      //       icon: '',
-      //       route: '/procurement/purchase-orders',
-      //     },
-      //     {
-      //       name: 'Vendors',
-      //       svg_location: '',
-      //       icon: '',
-      //       route: '/procurement/vendors',
-      //     },
-      //     {
-      //       name: 'Inventory',
-      //       svg_location: '',
-      //       icon: '',
-      //       route: '/procurement/inventory-management',
-      //     },
-      //   ],
-      // },
+      {
+        name: 'Procurement',
+        svg_location: 'menu',
+        icon: 'Technical',
+        route: '/procurement',
+        submenu: [
+          {
+            name: 'Requisitions',
+            svg_location: '',
+            icon: '',
+            route: '/procurement/requisition',
+          },
+          {
+            name: 'Purchase Orders',
+            svg_location: '',
+            icon: '',
+            route: '/procurement/purchase-orders',
+          },
+          {
+            name: 'Vendors',
+            svg_location: '',
+            icon: '',
+            route: '/procurement/vendors',
+          },
+          {
+            name: 'Inventory',
+            svg_location: '',
+            icon: '',
+            route: '/procurement/inventory-management',
+          },
+        ],
+      },
       {
         name: 'Admin',
         svg_location: 'menu',
@@ -351,7 +327,7 @@ const allMenus: MenuGroup[] = [
             icon: '',
             route: '/manage/usermanagement',
           },
-          {
+           {
             name: 'Vendor Management',
             svg_location: '',
             icon: '',
@@ -365,7 +341,7 @@ const allMenus: MenuGroup[] = [
         icon: 'Operations',
         route: '/operations',
         submenu: [
-           {
+          {
             name: 'Voyage Reports',
             svg_location: '',
             icon: '',
@@ -389,7 +365,7 @@ const allMenus: MenuGroup[] = [
             icon: '',
             route: '/operations/library',
           },
-                     {
+           {
           name: 'Defects List',
           svg_location: '',
           icon: '',
@@ -639,7 +615,51 @@ const allMenus: MenuGroup[] = [
             icon: '',
             route: '/technical/machinery',
           },
-           {
+          {
+  name: 'PMS',
+  svg_location: '',
+  icon: '',
+  route: '/technical/pms',
+  submenu: [
+    {
+      name: 'Dashboard',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms',
+    },
+    {
+      name: 'Jobs',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms/jobs',
+    },
+    {
+      name: 'Plans',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms/plans',
+    },
+    {
+      name: 'Templates',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms/templates',
+    },
+    {
+      name: 'Running Hours',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms/running-hours',
+    },
+    {
+      name: 'Weekly Planning',
+      svg_location: '',
+      icon: '',
+      route: '/technical/pms/weekly-planning',
+    },
+  ],
+},
+            {
             name: 'Procurement',
             svg_location: '',
             icon: '',
@@ -719,7 +739,7 @@ const allMenus: MenuGroup[] = [
             icon: '',
             route: '/procurement/inventory-management',
           },
-            {
+          {
           name: 'Defects List',
           svg_location: '',
           icon: '',
@@ -740,6 +760,12 @@ const allMenus: MenuGroup[] = [
             route: '/qhse/document-library',
           },
           {
+          name: 'Forms & Checklists',
+          svg_location: '',
+          icon: '',
+          route: '/qhse/forms-checklists',
+        },
+          {
             name: 'Vessel Certificates',
             svg_location: '',
             icon: '',
@@ -751,7 +777,7 @@ const allMenus: MenuGroup[] = [
           icon: '',
           route: '/qhse/manuals-and-plans',
         },
-          {
+        {
           name: 'Defects List',
           svg_location: '',
           icon: '',
@@ -809,7 +835,7 @@ const allMenus: MenuGroup[] = [
             },
           ]
           },
-          {
+{
       name: 'Near Miss reports',
       svg_location: '',
       icon: '',
@@ -821,7 +847,6 @@ const allMenus: MenuGroup[] = [
       icon: '',
       route: '/qhse/risk-assessment-form',
     },
-
         ],
       },
       {
@@ -1020,17 +1045,38 @@ const mapApiTreeToMenuGroups = (apiRoot: ApiMenuNode | ApiMenuNode[]): MenuGroup
  * - getMenusByRoleAsync: for roleId 6 fetches dynamic menu, otherwise returns static.
  */
 
-export const getMenusByRoleSync = (roleId: number): MenuGroup[] => {
+export const getMenusByRoleSync = (roleId: number, rankId?: number): MenuGroup[] => {
   const allowed = roleAccess[String(roleId)]
   const nestedAllowed = roleNestedAccess[String(roleId)]
   if (!allowed) return []
+
+    // For Crew (role 4), check if they have Master rank (rankId === 1) for Machinery and PMS access
+  const isCrewMaster = roleId === 4 && rankId === 1
 
   return allMenus.map((group) => {
     const filteredMenuItems = group.menu
       // keep only modules/menus explicitly listed for this role
       .filter((item) => Object.prototype.hasOwnProperty.call(allowed, item.name))
       .map((item) => {
-        const allowedSubmenus = allowed[item.name] || []
+        let allowedSubmenus = allowed[item.name] || []
+
+        // Special handling for Crew (4): Only Master rank can access Machinery and PMS
+        if (roleId === 4 && item.name === 'Technical') {
+          if (!isCrewMaster) {
+            // Remove Machinery and PMS from allowed submenus for non-Master crew
+            allowedSubmenus = allowedSubmenus.filter(
+              (sub) => sub !== 'Machinery' && sub !== 'PMS'
+            )
+          } else {
+            // Master crew can access Machinery and PMS - ensure they're in the list
+            if (!allowedSubmenus.includes('Machinery')) {
+              allowedSubmenus = [...allowedSubmenus, 'Machinery']
+            }
+            if (!allowedSubmenus.includes('PMS')) {
+              allowedSubmenus = [...allowedSubmenus, 'PMS']
+            }
+          }
+        }
 
         // keep only allowed 2nd-level submenus
         const filteredSubmenu = item.submenu

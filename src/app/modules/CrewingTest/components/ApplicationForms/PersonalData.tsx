@@ -65,7 +65,7 @@ interface PersonalDataProps {
   bloodGroupOptions: string[];
   /** Lock core assignment fields after personal data is saved */
   lockCoreFields?: boolean;
-    /** NEW: how Operator should behave (provided by parent EditCrewModal) */
+      /** NEW: how Operator should behave (provided by parent EditCrewModal) */
   operatorActsLikeSuperadmin?: boolean;
   operatorActsLikeGroupAdmin?: boolean;
 }

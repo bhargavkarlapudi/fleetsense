@@ -1,16 +1,17 @@
-import React, {FC, useEffect, useState} from 'react'
+import React, {FC, useCallback, useEffect, useRef, useState} from 'react'
 import {KTSVG} from '../../../../_metronic/helpers'
 import {DocumentItem,BreadcrumbItem} from '../core/_models'
-import {ToastContainer} from 'react-toastify'
+import {ToastContainer, toast} from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
-import * as XLSX from 'xlsx'
 import {useAuth} from '../../auth'
 import {SearchBar} from './SearchBar'
 import {BreadcrumbNav} from './BreadcrumbNav'
 import {FolderTreeItem} from './FolderTreeItem'
 import {DocumentTable} from './DocumentTable'
 import {DocumentViewer} from './DocumentViewer'
-import { fetchDocumentsRequest } from '../core/_requests'
+import ConfirmDialog from '../../../components/ConfirmDialog'
+import { createQhseFolderRequest, deleteQhseDocumentRequest, fetchDocumentsRequest, updateQhseDocumentRequest, uploadQhseDocumentsRequest, uploadQhseZipRequest } from '../core/_requests'
+
 import axios from 'axios'
 
 const API_URL = process.env.REACT_APP_API_URL
@@ -36,84 +37,144 @@ const DocumentLibrary: FC = () => {
   ])
   const [selectedDocument, setSelectedDocument] = useState<DocumentItem | null>(null)
   const [loading, setLoading] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [showCreateFolder, setShowCreateFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [newFolderCategory, setNewFolderCategory] = useState('')
+  const [uploadMode, setUploadMode] = useState<'files' | 'zip'>('files')
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const selectedFolderIdRef = useRef<number | null>(null)
+  const [confirmState, setConfirmState] = useState<{
+    open: boolean
+    title: string
+    message: string
+    tone?: 'danger' | 'primary'
+    onConfirm: () => Promise<void> | void
+  }>({
+    open: false,
+    title: '',
+    message: '',
+    onConfirm: () => undefined,
+  })
+  const [confirmBusy, setConfirmBusy] = useState(false)
+  const [renameState, setRenameState] = useState<{
+    id: number | null
+    title: string
+    type: 'folder' | 'document' | null
+  }>({
+    id: null,
+    title: '',
+    type: null,
+  })
+  const [renaming, setRenaming] = useState(false)
+
+  const findFolderById = useCallback((items: DocumentItem[], id?: number | string): DocumentItem | null => {
+    if (id == null) return null
+    const targetId = Number(id)
+    for (const item of items) {
+      if (item.type === 'folder' && item.id === targetId) {
+        return item
+      }
+      if (item.children?.length) {
+        const found = findFolderById(item.children, targetId)
+        if (found) return found
+      }
+    }
+    return null
+  }, [])
 
   // Determine which company ID to use for fetching documents
-  const getCompanyIdForFetch = () => {
+  const getCompanyIdForFetch = useCallback(() => {
     if (roleId === 1) {
       // Superadmin: use selected company
-      return selectedCompanyId
-    } else {
-      // Regular user: use their own company
-      return compnayId ?? null
+      return selectedCompanyId ? Number(selectedCompanyId) : null
+    }
+    // Regular user: use their own company
+    return compnayId ?? null
+  }, [compnayId, roleId, selectedCompanyId])
+
+  // Fetch companies for superadmin
+ useEffect(() => {
+  const fetchCompanies = async () => {
+    try {
+      if (roleId !== 1) return;
+      
+      const data = await axios(`${COMPANY_ADMIN_API_URL}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }).then(res => res.data);
+
+      setCompanies(data)
+
+      // Auto-select the first company only if none is selected yet
+      if (!selectedCompanyId && data && data.length > 0) {
+        setSelectedCompanyId(data[0].id.toString())
+      }
+    } catch (error) {
+      console.error('❌ Error fetching companies:', error)
     }
   }
 
-  // Fetch companies for superadmin
-  useEffect(() => {
-    const fetchCompanies = async () => {
-      try {
-        if (roleId !== 1) return;
-        
-        const data = await axios(`${COMPANY_ADMIN_API_URL}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }).then(res => res.data);
-
-        setCompanies(data)
-      } catch (error) {
-        console.error('❌ Error fetching companies:', error)
-      }
-    }
-
-    if (token && roleId === 1) {
-      fetchCompanies()
-    }
-  }, [token, roleId])
+  if (token && roleId === 1) {
+    fetchCompanies()
+  }
+}, [token, roleId, selectedCompanyId])
 
   // Fetch documents when company is selected (or user's company for non-superadmin)
-  useEffect(() => {
-    const fetchDocuments = async () => {
-      try {
-        setLoading(true)
-        
-        const companyIdToFetch = getCompanyIdForFetch()
-        
-        // Don't fetch if no company is selected for superadmin
-        if (roleId === 1 && !selectedCompanyId) {
-          setDocuments([])
-          setLoading(false)
-          return
-        }
-
-        // Fetch documents for the selected/current company
-        //  @ts-ignore
-        const data = await fetchDocumentsRequest(companyIdToFetch, token ?? "")
-        const doc: DocumentItem[] = data
-        setDocuments(doc)
-      } catch (error) {
-        console.error('❌ Error fetching documents:', error)
+  const refreshDocuments = useCallback(async () => {
+    try {
+      setLoading(true)
+      const companyIdToFetch = getCompanyIdForFetch()
+      if (!companyIdToFetch) {
         setDocuments([])
-      } finally {
         setLoading(false)
+        return
       }
-    }
 
-    if (token) {
-      // For superadmin: only fetch when company is selected
-      // For regular users: fetch immediately with their company
-      if (roleId === 1) {
-        if (selectedCompanyId) {
-          fetchDocuments()
+      const data = await fetchDocumentsRequest(companyIdToFetch, token ?? '')
+      const doc: DocumentItem[] = data
+      setDocuments(doc)
+      if (selectedFolderIdRef.current != null) {
+        const refreshed = findFolderById(doc, selectedFolderIdRef.current)
+        if (refreshed) {
+          setSelectedFolder(refreshed)
+          const folderPath = buildFolderPath(refreshed.id, doc)
+          const newBreadcrumbs: BreadcrumbItem[] = [{id: 'root', title: 'Document Library'}]
+          folderPath.forEach((folderItem) => {
+            newBreadcrumbs.push({
+              id: folderItem.id.toString(),
+              title: folderItem.title,
+            })
+          })
+          setBreadcrumbs(newBreadcrumbs)
         } else {
-          setLoading(false)
-          setDocuments([])
+          setSelectedFolder(null)
+          selectedFolderIdRef.current = null
+          setBreadcrumbs([{id: 'root', title: 'Document Library'}])
         }
-      } else {
-        fetchDocuments()
       }
+    } catch (error) {
+      console.error('❌ Error fetching documents:', error)
+      setDocuments([])
+    } finally {
+      setLoading(false)
     }
-  }, [token, selectedCompanyId, roleId, compnayId])
+  }, [findFolderById, getCompanyIdForFetch, token])
+
+  useEffect(() => {
+    if (!token) return
+    refreshDocuments()
+  }, [refreshDocuments, token])
+
+  useEffect(() => {
+    if (roleId !== 1) return
+    if (!selectedCompanyId) return
+    setSelectedFolder(null)
+    selectedFolderIdRef.current = null
+    setBreadcrumbs([{id: 'root', title: 'Document Library'}])
+  }, [roleId, selectedCompanyId])
 
   // Initialize component
   useEffect(() => {
@@ -156,32 +217,33 @@ const DocumentLibrary: FC = () => {
 
   // Company dropdown component - moved to right side
   const CompanyDropdown = () => {
-    if (roleId !== 1) return null; // Only show for superadmin
+  if (roleId !== 1) return null; // Only show for superadmin
 
-    return (
-      <div className="d-flex align-items-center">
-        <label className="form-label me-2 mb-0 fw-semibold text-gray-700">Company:</label>
-        <select
-          className="form-select form-select-sm"
-          style={{ minWidth: '200px' }}
-          value={selectedCompanyId}
-          onChange={(e) => {
-            setSelectedCompanyId(e.target.value)
-            // Reset folder selection when company changes
-            setSelectedFolder(null)
-            setBreadcrumbs([{id: 'root', title: 'Document Library'}])
-          }}
-        >
-          <option value="">Select Company</option>
-          {companies.map((company: any) => (
-            <option key={company.id} value={company.id}>
-              {company.name || company.companyName || `Company ${company.id}`}
-            </option>
-          ))}
-        </select>
-      </div>
-    )
-  }
+  return (
+    <div className="d-flex align-items-center">
+      <label className="form-label me-2 mb-0 fw-semibold text-gray-700">Company:</label>
+      <select
+        className="form-select form-select-sm"
+        style={{ minWidth: '200px' }}
+        value={selectedCompanyId}
+        onChange={(e) => {
+          setSelectedCompanyId(e.target.value)
+          // Reset folder selection when company changes
+          setSelectedFolder(null)
+          selectedFolderIdRef.current = null
+          setBreadcrumbs([{id: 'root', title: 'Document Library'}])
+        }}
+      >
+        {/* Remove the "Select Company" option since we auto-select the first one */}
+        {companies.map((company: any) => (
+          <option key={company.id} value={company.id}>
+            {company.name || company.companyName || `Company ${company.id}`}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
 
   // Handlers
   const handleToggleFolder = (folderId: number, level: number) => {
@@ -204,11 +266,12 @@ const DocumentLibrary: FC = () => {
     setExpandedFolders(newExpanded)
   }
 
-  // FIXED: Don't trigger API call, just update selection and breadcrumbs
+  
   const handleSelectFolder = (folder: DocumentItem) => {
     console.log('Selected folder:', folder)
 
     setSelectedFolder(folder)
+    selectedFolderIdRef.current = folder.id
 
     // Build breadcrumbs from actual folder hierarchy
     const folderPath = buildFolderPath(folder.id, documents)
@@ -228,22 +291,9 @@ const DocumentLibrary: FC = () => {
   const handleBreadcrumbNavigate = (breadcrumb: BreadcrumbItem) => {
     if (breadcrumb.id === 'root') {
       setSelectedFolder(null)
+      selectedFolderIdRef.current = null
       setBreadcrumbs([{id: 'root', title: 'Document Library'}])
     } else {
-      // Find the folder by ID and navigate to it
-      const findFolderById = (items: DocumentItem[], id: string): DocumentItem | null => {
-        for (const item of items) {
-          if (item.id.toString() === id) {
-            return item
-          }
-          if (item.children) {
-            const found = findFolderById(item.children, id)
-            if (found) return found
-          }
-        }
-        return null
-      }
-
       const targetFolder = findFolderById(documents, breadcrumb.id)
       if (targetFolder) {
         handleSelectFolder(targetFolder)
@@ -259,7 +309,238 @@ const DocumentLibrary: FC = () => {
     console.log('Downloading document:', document.title)
   }
 
-  // FIXED: Proper document filtering logic with search
+  const handleUploadClick = () => {
+    const companyIdToUpload = getCompanyIdForFetch()
+    if (!companyIdToUpload) {
+      toast.error('Select a company before uploading documents.')
+      return
+    }
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    fileInputRef.current?.click()
+  }
+
+  const handleUploadChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? [])
+    event.target.value = ''
+    if (!files.length) return
+
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+
+    const companyIdToUpload = getCompanyIdForFetch()
+    if (!companyIdToUpload) {
+      toast.error('Select a company before uploading documents.')
+      return
+    }
+
+    const uploaderName = currentUser?.username || (auth?.userDetails as any)?.username || ''
+    if (!uploaderName) {
+      toast.error('Unable to determine uploader details.')
+      return
+    }
+
+    const parentId = selectedFolder?.type === 'folder' ? selectedFolder.id : null
+
+    try {
+      setUploading(true)
+      if (uploadMode === 'zip') {
+        if (files.length !== 1) {
+          toast.error('Please select a single ZIP file.')
+          return
+        }
+        const file = files[0]
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+          toast.error('Only .zip files are allowed for ZIP upload.')
+          return
+        }
+        await uploadQhseZipRequest(
+          {
+            companyGroupId: companyIdToUpload,
+            category: selectedFolder?.title || undefined,
+            scopeType: 'COMPANY',
+            file,
+          },
+          token ?? '',
+          parentId
+        )
+      } else {
+        if (files.length > 10) {
+          toast.error('You can upload a maximum of 10 files at a time.')
+          return
+        }
+        await uploadQhseDocumentsRequest(
+          {
+            companyGroupId: companyIdToUpload,
+            category: selectedFolder?.title || undefined,
+            createdBy: uploaderName,
+            scopeType: 'COMPANY',
+            files,
+          },
+          token ?? '',
+          parentId
+        )
+      }
+      toast.success('Documents uploaded successfully.')
+      await refreshDocuments()
+    } catch (error) {
+      console.error('❌ Error uploading documents:', error)
+      toast.error('Unable to upload documents.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const handleDeleteDocument = async (document: DocumentItem) => {
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    setConfirmState({
+      open: true,
+      title: 'Delete document',
+      message: `Delete "${document.title}"? This cannot be undone.`,
+      tone: 'danger',
+      onConfirm: async () => {
+        await deleteQhseDocumentRequest(document.id, token ?? '')
+        toast.success('Document deleted.')
+        if (selectedDocument?.id === document.id) {
+          setSelectedDocument(null)
+        }
+        await refreshDocuments()
+      },
+    })
+  }
+
+  const handleDeleteFolder = async (folder: DocumentItem) => {
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    setConfirmState({
+      open: true,
+      title: 'Delete folder',
+      message: `Delete folder "${folder.title}" and all files inside? This cannot be undone.`,
+      tone: 'danger',
+      onConfirm: async () => {
+        await deleteQhseDocumentRequest(folder.id, token ?? '')
+        toast.success('Folder deleted.')
+        if (selectedFolder?.id === folder.id) {
+          setSelectedFolder(null)
+          selectedFolderIdRef.current = null
+          setBreadcrumbs([{id: 'root', title: 'Document Library'}])
+        }
+        await refreshDocuments()
+      },
+    })
+  }
+
+  const startRename = (item: DocumentItem) => {
+    setRenameState({ id: item.id, title: item.title, type: item.type })
+  }
+
+  const cancelRename = () => {
+    setRenameState({ id: null, title: '', type: null })
+  }
+
+  const commitRename = async (item: DocumentItem) => {
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    if (renameState.id !== item.id) return
+    const trimmed = renameState.title.trim()
+    if (!trimmed) {
+      toast.error('Name cannot be empty.')
+      return
+    }
+    if (trimmed === item.title) {
+      cancelRename()
+      return
+    }
+    try {
+      setRenaming(true)
+      await updateQhseDocumentRequest(item.id, { title: trimmed }, token ?? '')
+      toast.success(`${item.type === 'folder' ? 'Folder' : 'Document'} renamed.`)
+      cancelRename()
+      await refreshDocuments()
+      if (selectedDocument?.id === item.id) {
+        setSelectedDocument({ ...selectedDocument, title: trimmed })
+      }
+      if (selectedFolder?.id === item.id) {
+        setSelectedFolder({ ...selectedFolder, title: trimmed })
+      }
+    } catch (error) {
+      console.error('❌ Error renaming:', error)
+      toast.error('Unable to rename.')
+    } finally {
+      setRenaming(false)
+    }
+  }
+
+  const openCreateFolder = () => {
+    const companyIdToUpload = getCompanyIdForFetch()
+    if (!companyIdToUpload) {
+      toast.error('Select a company before creating a folder.')
+      return
+    }
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    setNewFolderName('')
+    setNewFolderCategory('')
+    setShowCreateFolder(true)
+  }
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return
+    if (!token) {
+      toast.error('Authentication token missing.')
+      return
+    }
+    const companyIdToCreate = getCompanyIdForFetch()
+    if (!companyIdToCreate) {
+      toast.error('Select a company before creating a folder.')
+      return
+    }
+
+    const parentId = selectedFolder?.type === 'folder' ? selectedFolder.id : null
+    const uploaderName = currentUser?.username || (auth?.userDetails as any)?.username || ''
+    if (!uploaderName) {
+      toast.error('Unable to determine creator details.')
+      return
+    }
+
+    try {
+      setCreatingFolder(true)
+      await createQhseFolderRequest(
+        {
+          companyGroupId: companyIdToCreate,
+          title: newFolderName.trim(),
+          category: newFolderCategory.trim() || undefined,
+          createdBy: uploaderName,
+          scopeType: 'COMPANY',
+        },
+        token ?? '',
+        parentId
+      )
+      toast.success('Folder created successfully.')
+      setShowCreateFolder(false)
+      await refreshDocuments()
+    } catch (error) {
+      console.error('❌ Error creating folder:', error)
+      toast.error('Unable to create folder.')
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
+
+  
   const getDocumentsToDisplay = (): DocumentItem[] => {
     // Get the base documents to search from
     let documentsToSearch: DocumentItem[] = []
@@ -270,7 +551,7 @@ const DocumentLibrary: FC = () => {
         items.forEach((item) => {
           if (item.type === 'document') {
             documentsToSearch.push(item)
-          } else if (item.children) {
+                        } else if (item.children) {
             extractAllDocuments(item.children)
           }
         })
@@ -372,6 +653,16 @@ const DocumentLibrary: FC = () => {
                               selectedFolderId={selectedFolder?.id}
                               onToggleFolder={handleToggleFolder}
                               onSelectFolder={handleSelectFolder}
+                              onDeleteFolder={handleDeleteFolder}
+                              onStartRename={startRename}
+                              onRenameChange={(value) =>
+                                setRenameState((prev) => ({ ...prev, title: value }))
+                              }
+                              onCancelRename={cancelRename}
+                              onCommitRename={commitRename}
+                              renamingId={renameState.id}
+                              renamingValue={renameState.title}
+                              renamingBusy={renaming}
                             />
                           ))
                         ) : (
@@ -401,33 +692,61 @@ const DocumentLibrary: FC = () => {
                           {getDocumentsToDisplay().length !== 1 ? 's' : ''} found
                         </span>
                       </h3>
-                      {selectedFolder && (
-                        <div className='card-toolbar'>
+                      <div className='card-toolbar d-flex flex-wrap align-items-center justify-content-end gap-2'>
                           <button
+                            type='button'
                             className='btn btn-sm btn-light'
-                            onClick={() => {
-                              setSelectedFolder(null)
-                              setBreadcrumbs([{id: 'root', title: 'Document Library'}])
-                            }}
+                            onClick={openCreateFolder}
+                            disabled={creatingFolder || !token || (roleId === 1 && !selectedCompanyId)}
+                            title={selectedFolder ? `Create folder under ${selectedFolder.title}` : 'Create folder'}
                           >
-                            <KTSVG
-                              path='/media/icons/duotune/arrows/arr063.svg'
-                              className='svg-icon-5 me-2'
-                            />
-                            Show All Documents
+                            Create Folder
                           </button>
-                        </div>
-                      )}
+                          <button
+                            type='button'
+                            className='btn btn-sm btn-primary'
+                            onClick={handleUploadClick}
+                            disabled={uploading || !token || (roleId === 1 && !selectedCompanyId)}
+                            title={
+                              selectedFolder
+                                ? `Upload documents to ${selectedFolder.title}`
+                                : 'Upload documents'
+                            }
+                          >
+                            {uploading ? 'Uploading...' : 'Upload Documents'}
+                          </button>
+                          <select
+                            className='form-select form-select-sm'
+                            style={{ width: 120 }}
+                            value={uploadMode}
+                            onChange={(e) => setUploadMode(e.target.value as 'files' | 'zip')}
+                            disabled={uploading}
+                          >
+                            <option value='files'>Files (1-10)</option>
+                            <option value='zip'>ZIP upload</option>
+                          </select>
+                          {selectedFolder && (
+                            <button
+                              type='button'
+                              className='btn btn-sm btn-light'
+                              onClick={() => {
+                                setSelectedFolder(null)
+                                selectedFolderIdRef.current = null
+                                setBreadcrumbs([{id: 'root', title: 'Document Library'}])
+                              }}
+                            >
+                              <KTSVG
+                                path='/media/icons/duotune/arrows/arr063.svg'
+                                className='svg-icon-5 me-2'
+                              />
+                              Show All Documents
+                            </button>
+                          )}
+                      </div>
                     </div>
-                    <div
-                      className='card-body py-3'
-                      style={{
-                        height: '400px', // set any fixed height you want
-                        overflowY: 'auto', // scroll only on Y-axis
-                        overflowX: 'hidden', // hide horizontal scroll
-                      }}
-                    >
-                      {/* Show loading or document table */}
+                    
+                    <div className='card-body py-3' style={{flex: 1, overflow: 'hidden'}}>
+                      
                       {loading ? (
                         <div className='d-flex justify-content-center align-items-center h-100'>
                           <div className='text-center'>
@@ -443,6 +762,16 @@ const DocumentLibrary: FC = () => {
                           documents={getDocumentsToDisplay()}
                           onDocumentClick={handleDocumentClick}
                           onDownload={handleDownload}
+                          onDelete={handleDeleteDocument}
+                          onStartRename={startRename}
+                          onRenameChange={(value) =>
+                            setRenameState((prev) => ({ ...prev, title: value }))
+                          }
+                          onCancelRename={cancelRename}
+                          onCommitRename={commitRename}
+                          renamingId={renameState.id}
+                          renamingValue={renameState.title}
+                          renamingBusy={renaming}
                         />
                       )}
                     </div>
@@ -458,11 +787,109 @@ const DocumentLibrary: FC = () => {
       {selectedDocument && (
         <DocumentViewer
           document={selectedDocument}
+          allDocuments={documents}
           onClose={() => setSelectedDocument(null)}
           onDownload={handleDownload}
-          allDocuments={[]}
+          simpleView
         />
       )}
+
+      <input
+        ref={fileInputRef}
+        type='file'
+        multiple={uploadMode === 'files'}
+        accept={uploadMode === 'zip' ? '.zip' : undefined}
+        className='d-none'
+        onChange={handleUploadChange}
+      />
+
+      {showCreateFolder && (
+        <div
+          className='modal fade show d-flex align-items-center justify-content-center'
+          tabIndex={-1}
+          style={{
+            backgroundColor: 'rgba(0,0,0,0.5)',
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1050,
+          }}
+        >
+          <div className='modal-dialog modal-dialog-centered' role='document' style={{ maxWidth: 520, width: '100%' }}>
+            <div className='modal-content'>
+              <div className='modal-header'>
+                <div>
+                  <h5 className='modal-title mb-0'>Create Folder</h5>
+                  {selectedFolder ? (
+                    <div className='text-muted small'>Parent: {selectedFolder.title}</div>
+                  ) : null}
+                </div>
+                <button
+                  type='button'
+                  className='btn-close'
+                  onClick={() => setShowCreateFolder(false)}
+                  aria-label='Close'
+                />
+              </div>
+              <div className='modal-body'>
+                <div className='mb-3'>
+                  <label className='form-label text-gray-800'>Folder Name</label>
+                  <input
+                    className='form-control'
+                    value={newFolderName}
+                    onChange={(e) => setNewFolderName(e.target.value)}
+                    placeholder='e.g. Apex Manual'
+                  />
+                </div>
+                <div>
+                  <label className='form-label text-gray-800'>Category (optional)</label>
+                  <input
+                    className='form-control'
+                    value={newFolderCategory}
+                    onChange={(e) => setNewFolderCategory(e.target.value)}
+                    placeholder='Imported'
+                  />
+                </div>
+              </div>
+              <div className='modal-footer'>
+                <button type='button' className='btn btn-light' onClick={() => setShowCreateFolder(false)}>
+                  Cancel
+                </button>
+                <button
+                  type='button'
+                  className='btn btn-primary'
+                  onClick={handleCreateFolder}
+                  disabled={creatingFolder || !newFolderName.trim()}
+                >
+                  {creatingFolder ? 'Creating...' : 'Create Folder'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmDialog
+        isOpen={confirmState.open}
+        title={confirmState.title}
+        message={confirmState.message}
+        tone={confirmState.tone}
+        confirmLabel='Delete'
+        busy={confirmBusy}
+        onCancel={() => setConfirmState((prev) => ({ ...prev, open: false }))}
+        onConfirm={async () => {
+          try {
+            setConfirmBusy(true)
+            await confirmState.onConfirm()
+          } catch (error) {
+            console.error('❌ Confirm action failed:', error)
+            toast.error('Unable to complete action.')
+          } finally {
+            setConfirmBusy(false)
+            setConfirmState((prev) => ({ ...prev, open: false }))
+          }
+        }}
+      />
+
 
       <ToastContainer />
     </div>

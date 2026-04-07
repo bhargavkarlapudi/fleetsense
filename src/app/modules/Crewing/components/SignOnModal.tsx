@@ -238,7 +238,7 @@ if (!filteredCrews.some(c => c.id === Number(selectedCrewId))) {
           ? currentUser?.vessel
           : vessels.find(v => v.id === Number(selectedVesselId));
 
-      const loginLink = `https://uat.elecmeksolutions.com/auth/${vesselForLink?.vesselType}/${vesselForLink?.imoNumber}/ship-login`;
+      const loginLink = `https://elecmeksolutions.com/auth/${vesselForLink?.vesselType}/${vesselForLink?.imoNumber}/ship-login`;
 
       // build the exact same URL you used in AddCrewModal
 

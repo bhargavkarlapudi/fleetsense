@@ -519,12 +519,12 @@ const CompanyAdminList: FC = () => {
                                 <div className="modal-body">
                                     <p><strong>Username:</strong> {newCompanyCredentials.username}</p>
                                     <p><strong>Password:</strong> {newCompanyCredentials.password}</p>
-                                    <p><strong>Company Login Link:</strong> https://uat.elecmeksolutions.com/auth/{newCompanyCredentials.username}</p>
+                                    <p><strong>Company Login Link:</strong> https://elecmeksolutions.com/auth/{newCompanyCredentials.username}</p>
                                     <p className="text-muted">Please note down these credentials now. For your security, they won't be shown again.</p>
                                     <button
                                         className="btn btn-light"
                                         onClick={() => {
-                                            navigator.clipboard.writeText(`Username: ${newCompanyCredentials.username}\nPassword: ${newCompanyCredentials.password}\nLink: https://uat.elecmeksolutions.com/auth/${newCompanyCredentials.username}`);
+                                            navigator.clipboard.writeText(`Username: ${newCompanyCredentials.username}\nPassword: ${newCompanyCredentials.password}\nLink: https://elecmeksolutions.com/auth/${newCompanyCredentials.username}`);
                                             toast.success("Copied to clipboard");
                                         }}
                                     >

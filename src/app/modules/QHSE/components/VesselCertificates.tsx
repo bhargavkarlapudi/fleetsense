@@ -22,7 +22,11 @@ import {
 // local Certificate interface
 interface Certificate {
   id: string
-  certificateName: string
+  certificateName: string // Legacy
+  certificateNameId?: number // New field
+  certificateNameText?: string // Display name from entity
+  certificateCategoryId?: number // Category ID
+  certificateCategoryName?: string // Category name
   dateOfIssue?: string
   dateOfExpiry?: string
   uploadedDate: string
@@ -392,12 +396,13 @@ const openEdit = (c: Certificate) => { setEditingCert(c); setIsEditOpen(true) }
 const closeEdit = () => { setIsEditOpen(false); setEditingCert(null) }
 
 const handleEditSubmit = async (p: {
-  id: number, certificateName: string, dateOfIssue?: string, dateOfExpiry?: string, remarks?: string, __file?: File | null
+  id: number, certificateName?: string, certificateNameId?: number, dateOfIssue?: string, dateOfExpiry?: string, remarks?: string, __file?: File | null
 }) => {
   try {
     await updateCertificate(p.id, {
       id: p.id as any,
       certificateName: p.certificateName,
+      certificateNameId: p.certificateNameId,
       dateOfIssue: p.dateOfIssue,
       dateOfExpiry: p.dateOfExpiry,
       remarks: p.remarks,
@@ -1085,6 +1090,8 @@ const handleEditSubmit = async (p: {
     record={{
       id: Number(editingCert.id),
       certificateName: editingCert.certificateName,
+      certificateNameId: editingCert.certificateNameId,
+      certificateCategoryId: editingCert.certificateCategoryId,
       dateOfIssue: editingCert.dateOfIssue,
       dateOfExpiry: editingCert.dateOfExpiry,
       remarks: editingCert.remarks,

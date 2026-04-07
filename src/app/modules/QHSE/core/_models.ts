@@ -79,7 +79,11 @@ export interface ApiError {
 
 export interface Certificate {
   id: string
-  certificateName: string
+  certificateName: string // Legacy
+  certificateNameId?: number // New field
+  certificateNameText?: string // Display name from entity
+  certificateCategoryId?: number // Category ID
+  certificateCategoryName?: string // Category name
   dateOfIssue?: string
   dateOfExpiry?: string
   uploadedDate?: string
@@ -114,6 +118,18 @@ export interface DocumentItem {
   title: string
   type: 'folder' | 'document'
   category: string
+  /** manual | form; helps the UI render badges and actions */
+  docType?: 'manual' | 'form'
+  /** Optional semantic version tag like v1, v0.01 */
+  versionTag?: string | null
+  /** Whether this is the active version the vessel should use */
+  isCurrentVersion?: boolean
+  /** Optional pointer to a form template/schema on the backend */
+  formTemplateId?: number | null
+  /** Optional schema sent from the API to render a fillable form */
+  formSchema?: FormSchema | null
+  /** Retention policy (years) surfaced in the UI */
+  retentionYears?: number | null
   filePath?: string | null
   fileSize?: string | null
   dateUploaded?: string | null
@@ -128,6 +144,74 @@ export interface BreadcrumbItem {
   id: string
   title: string
   path?: string
+}
+
+// ===== Forms (schema-driven UI) =====
+export type FormFieldOption = {
+  value: string
+  label: string
+}
+
+export type FormFieldSchema = {
+  key: string
+  label: string
+  type: 'text' | 'textarea' | 'select' | 'date' | 'number' | 'checkbox' | 'radio'
+  required?: boolean
+  placeholder?: string
+  options?: FormFieldOption[]
+  helpText?: string
+}
+
+export type FormSectionSchema = {
+  title: string
+  description?: string
+  fields: FormFieldSchema[]
+}
+
+export type ChecklistHeaderRow = {
+  left: FormFieldSchema
+  right: FormFieldSchema
+}
+
+export type ChecklistTableRow =
+  | { type: 'group'; title: string }
+  | { type: 'question'; number: string; text: string; answerKey: string; remarkKey: string }
+
+export type ChecklistTableSchema = {
+  documentId?: string
+  issuedDate?: string
+  instructions?: string
+  headerRows: ChecklistHeaderRow[]
+  rows: ChecklistTableRow[]
+}
+
+export type PdfOverlayField = {
+  key: string
+  label: string
+  type: 'text' | 'date' | 'select' | 'textarea'
+  xPct: number
+  yPct: number
+  widthPct: number
+  heightPct: number
+  options?: FormFieldOption[]
+  placeholder?: string
+}
+
+export type PdfOverlaySchema = {
+  page: number
+  width: number
+  height: number
+  fields: PdfOverlayField[]
+}
+
+export type FormSchema = {
+  title: string
+  version?: string
+  template?: 'basic' | 'checklist-table' | 'pdf-overlay'
+  sections: FormSectionSchema[]
+  checklist?: ChecklistTableSchema
+  overlay?: PdfOverlaySchema
+  signatures?: Array<{ key: string; label: string }>
 }
 
 // ============================================================================

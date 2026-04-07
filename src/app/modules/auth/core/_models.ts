@@ -96,7 +96,7 @@ export interface UserModel {
   credentialsNonExpired: boolean;
   companyGroupAdminId?: number;
   companyAdminId?: number;
-      // NEW: make these available on /profile/me (the API already sends them in your examples)
+        // NEW: make these available on /profile/me (the API already sends them in your examples)
   companyGroupAdmin?: {
     id: number;
     name: string;

@@ -2418,7 +2418,7 @@ if (mustPickSubCompany && !selectedCompany.id) {
 }
 
   try {
-    const loginLink = `https://uat.elecmeksolutions.com/auth/${selectedVessel?.vesselType}/${selectedVessel?.imoNumber}/ship-login`;
+    const loginLink = `https://elecmeksolutions.com/auth/${selectedVessel?.vesselType}/${selectedVessel?.imoNumber}/ship-login`;
     // const password = generatePassword();
     // const userName = generateUsername(name);
 

@@ -664,7 +664,7 @@ if (roleId === 1 || isSuperadminOperator) {
     await loadOperators()
 
     // decide the login URL now (superadmin -> /auth, company -> /auth/<slug>)
-const BASE = 'https://uat.elecmeksolutions.com/auth'
+const BASE = 'https://elecmeksolutions.com/auth'
 let loginUrl = BASE
 
 if (companyGroupAdminId != null) {
@@ -2259,7 +2259,7 @@ const companyTd = (u: User) =>
                 <div className='bg-light rounded p-4 mb-4'>
                   <h6 className='text-muted mb-3'>System Generated Credentials:</h6>
                   <div className='row'>
-                        <div className='col-4'><span className='text-muted'>Login URL:</span></div>
+                                            <div className='col-4'><span className='text-muted'>Login URL:</span></div>
     <div className='col-8'>
       <code style={{ wordBreak: 'break-all' }}>{newCredentials.loginUrl}</code>
     </div>

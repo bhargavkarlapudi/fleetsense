@@ -103,7 +103,7 @@ const compareRank = (a?: string, b?: string, dir: 'asc' | 'desc' = 'asc'): numbe
 };
 
 const AssignmentPage: FC = () => {
-      // Role resolution & operator flavors
+        // Role resolution & operator flavors
   const { currentUser } = useAuth()
   const roleId: number = currentUser?.role?.id ?? 0
   const roleEntityId = currentUser?.roleEntityId ?? null
@@ -353,7 +353,7 @@ const handleExcelDownload = () => {
     return matchesSearch && matchesStatus && matchesVessel
   })
 
-  const sorted = [...filtered].sort((a, b) => {
+    const sorted = [...filtered].sort((a, b) => {
     // Default: newest-first by id if no explicit sortColumn
   if (!sortColumn) return b.id - a.id;
 
@@ -492,7 +492,7 @@ const handleExcelDownload = () => {
                       <thead className='table-header py-5'>
                         <tr>
                           {[
-                            { key: 'srNo', label: 'SR/NO' , isStatic: true},
+                            {key: 'srNo', label: 'SR/NO' , isStatic: true},
                             {key: 'crewName', label: 'NAME'},
                             {key: 'rank', label: 'RANK'},
                             {key: 'vesselName', label: 'VESSEL'},

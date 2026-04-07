@@ -1,4 +1,6 @@
 import React, { FC, useEffect, useState } from 'react'
+import { toast } from 'react-toastify'
+import { useAuth } from '../../auth'
 
 type CertLike = {
   id: number
@@ -9,13 +11,16 @@ type CertLike = {
   file?: { name: string }
 }
 
+const API_URL = process.env.REACT_APP_API_URL
+
 export const EditCertificateModal: FC<{
   visible: boolean
   onClose: () => void
-  record: CertLike
+  record: CertLike & {certificateNameId?: number, certificateCategoryId?: number}
   onSubmit: (p: {
     id: number
-    certificateName: string
+    certificateName?: string
+    certificateNameId?: number
     dateOfIssue?: string
     dateOfExpiry?: string
     remarks?: string
@@ -24,18 +29,33 @@ export const EditCertificateModal: FC<{
   onViewFile: (id: number) => void
   vesselName?: string
 }> = ({ visible, onClose, record, onSubmit, onViewFile, vesselName }) => {
+  const {auth} = useAuth()
   const [form, setForm] = useState({
+    certificateCategoryId: '',
+    certificateNameId: '',
     certificateName: '',
     dateOfIssue: '',
     dateOfExpiry: '',
     remarks: '',
   })
+  const [categories, setCategories] = useState<Array<{id: number, name: string}>>([])
+  const [certificateNames, setCertificateNames] = useState<Array<{id: number, name: string, categoryId: number}>>([])
+  const [filteredCertificateNames, setFilteredCertificateNames] = useState<Array<{id: number, name: string}>>([])
+  const [isLoadingLookups, setIsLoadingLookups] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
-const [newFile, setNewFile] = useState<File | null>(null)
+  const [newFile, setNewFile] = useState<File | null>(null)
 
+  useEffect(() => {
+    if (visible) {
+      fetchCertificateLookups()
+    }
+  }, [visible])
+  
   useEffect(() => {
     if (!record) return
     setForm({
+      certificateCategoryId: record.certificateCategoryId?.toString() || '',
+      certificateNameId: record.certificateNameId?.toString() || '',
       certificateName: record.certificateName || '',
       dateOfIssue: (record.dateOfIssue || '').substring(0, 10),
       dateOfExpiry: (record.dateOfExpiry || '').substring(0, 10),
@@ -44,10 +64,57 @@ const [newFile, setNewFile] = useState<File | null>(null)
     setNewFile(null)
     setErrors({})
   }, [record])
+  
+  // Filter certificate names when category changes
+  useEffect(() => {
+    if (form.certificateCategoryId) {
+      const filtered = certificateNames
+        .filter(cn => cn.categoryId === Number(form.certificateCategoryId))
+        .map(cn => ({id: cn.id, name: cn.name}))
+      setFilteredCertificateNames(filtered)
+    } else {
+      setFilteredCertificateNames([])
+    }
+  }, [form.certificateCategoryId, certificateNames])
+  
+  const fetchCertificateLookups = async () => {
+    setIsLoadingLookups(true)
+    try {
+      const token = auth?.auth.jwt
+      const [categoriesRes, namesRes] = await Promise.all([
+        fetch(`${API_URL}/qhse/certificates/categories`, {
+          headers: {Authorization: `Bearer ${token}`}
+        }),
+        fetch(`${API_URL}/qhse/certificates/names`, {
+          headers: {Authorization: `Bearer ${token}`}
+        })
+      ])
+      
+      if (categoriesRes.ok) {
+        const cats = await categoriesRes.json()
+        setCategories(cats.map((c: any) => ({id: c.id, name: c.name})))
+      }
+      
+      if (namesRes.ok) {
+        const names = await namesRes.json()
+        setCertificateNames(names.map((n: any) => ({
+          id: n.id,
+          name: n.name,
+          categoryId: n.categoryId
+        })))
+      }
+    } catch (error) {
+      console.error('Failed to fetch certificate lookups:', error)
+      toast.error('Failed to load certificate options')
+    } finally {
+      setIsLoadingLookups(false)
+    }
+  }
 
  const v = () => {
   const e: Record<string,string> = {}
-  if (!form.certificateName.trim()) e.certificateName = 'Required'
+  if (!form.certificateCategoryId) e.certificateCategoryId = 'Required'
+  if (!form.certificateNameId) e.certificateNameId = 'Required'
   if (form.dateOfIssue && form.dateOfExpiry &&
       new Date(form.dateOfIssue) > new Date(form.dateOfExpiry)) {
     e.dateOfExpiry = 'Expiry cannot be earlier than Issue date'
@@ -72,7 +139,8 @@ const [newFile, setNewFile] = useState<File | null>(null)
     if (!v()) return
     onSubmit({
       id: record.id,
-      certificateName: form.certificateName.trim(),
+      certificateNameId: form.certificateNameId ? Number(form.certificateNameId) : undefined,
+      certificateName: form.certificateName.trim() || undefined, // Legacy fallback
       dateOfIssue: form.dateOfIssue || undefined,
       dateOfExpiry: form.dateOfExpiry || undefined,
       remarks: form.remarks || undefined,
@@ -99,12 +167,34 @@ const [newFile, setNewFile] = useState<File | null>(null)
                     <input className="form-control" disabled value={vesselName}/>
                   </div>
                 )}
+                {/* Certificate Category - Disabled when editing */}
+                <div className="col-12">
+                  <label className="form-label required fw-semibold fs-6 mb-2" style={{ color: '#181C32' }}>Certificate Category</label>
+                  <select className={`form-control ${errors.certificateCategoryId?'is-invalid':''}`}
+                         value={form.certificateCategoryId}
+                         onChange={e=>setForm(s=>({...s, certificateCategoryId:e.target.value, certificateNameId:''}))}
+                         disabled={true}>
+                    <option value="">Select Category</option>
+                    {categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                  {errors.certificateCategoryId && <div className="invalid-feedback">{errors.certificateCategoryId}</div>}
+                </div>
+                
+                {/* Certificate Name - Disabled when editing */}
                 <div className="col-12">
                   <label className="form-label required fw-semibold fs-6 mb-2" style={{ color: '#181C32' }}>Certificate Name</label>
-                  <input className={`form-control ${errors.certificateName?'is-invalid':''}`}
-                         value={form.certificateName}
-                         onChange={e=>setForm(s=>({...s, certificateName:e.target.value}))}/>
-                  {errors.certificateName && <div className="invalid-feedback">{errors.certificateName}</div>}
+                  <select className={`form-control ${errors.certificateNameId?'is-invalid':''}`}
+                         value={form.certificateNameId}
+                         onChange={e=>setForm(s=>({...s, certificateNameId:e.target.value}))}
+                         disabled={true}>
+                    <option value="">{!form.certificateCategoryId ? 'Select category first' : 'Select Certificate Name'}</option>
+                    {filteredCertificateNames.map(cn => (
+                      <option key={cn.id} value={cn.id}>{cn.name}</option>
+                    ))}
+                  </select>
+                  {errors.certificateNameId && <div className="invalid-feedback">{errors.certificateNameId}</div>}
                 </div>
                 <div className="col-md-6">
                   <label className="form-label required fw-semibold fs-6 mb-2" style={{ color: '#181C32' }}>Date of Issue</label>

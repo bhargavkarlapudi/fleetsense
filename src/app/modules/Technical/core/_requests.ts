@@ -3,7 +3,7 @@ import { Crew, CrewDocument, CrewCertification, Vessel } from "./_models";
 import { Voyage } from '../../operations/core/_models';
 import { Rank } from "./_models";
 import { Company, CompanyAdmin, HistoryRecord  } from "./_models";
-
+import { EquipmentDto, EquipmentComponentDto, SubcomponentDto, PartDto, VesselMachineryCountsDto } from './_models'
 
 const API_URL = process.env.REACT_APP_API_URL
 const CREW_API_URL = `${API_URL}/crew`;
@@ -11,7 +11,6 @@ const RANKS_API = `${API_URL}/ranks`;
 const COMPANY_ADMIN_API_URL = `${API_URL}/company-group-admins`;
 const GET_COMPANY_API_URL = `${API_URL}/users/company-admins`;
 const VESSEL_API_URL = `${process.env.REACT_APP_API_URL}/vessels`; // Assuming this is the endpoint for vessels
-
 
 export const getCrewList = async (): Promise<Crew[]> => {
   try {
@@ -434,5 +433,412 @@ export const getHistory = async (recordId: number): Promise<HistoryRecord[]> => 
   const data = res.data
   // normalize to array
   return Array.isArray(data) ? data : [data]
+}
+
+// ——— Equipment APIs ——————————————————————————————————————————————————————————
+
+
+const EQUIPMENT_URL = `${API_URL}/equipment`
+const EQUIPMENT_COMPONENTS_URL = `${API_URL}/equipment-components`
+const SUBCOMPONENTS_URL = `${API_URL}/subcomponents`
+const PARTS_URL = `${API_URL}/parts`
+
+export const getEquipmentList = async (vesselId?: number, q?: string): Promise<EquipmentDto[]> => {
+  try {
+    const params: any = {}
+    if (vesselId) params.vesselId = vesselId
+    if (q) params.q = q
+    const response = await axios.get<EquipmentDto[]>(EQUIPMENT_URL, { params })
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching equipment list:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching equipment list')
+  }
+}
+
+export const getVesselMachineryCounts = async (vesselId?: number): Promise<VesselMachineryCountsDto[]> => {
+  try {
+    const params: any = {}
+    if (vesselId) params.vesselId = vesselId
+    const response = await axios.get<VesselMachineryCountsDto[]>(`${EQUIPMENT_URL}/vessel-counts`, { params })
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching vessel machinery counts:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching vessel machinery counts')
+  }
+}
+
+export const getEquipmentById = async (id: number): Promise<EquipmentDto> => {
+  try {
+    const response = await axios.get<EquipmentDto>(`${EQUIPMENT_URL}/${id}`)
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching equipment:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching equipment')
+  }
+}
+
+export const getEquipmentByVessel = async (vesselId: number): Promise<EquipmentDto[]> => {
+  try {
+    const response = await axios.get<EquipmentDto[]>(`${EQUIPMENT_URL}/by-vessel/${vesselId}`)
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching equipment by vessel:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching equipment by vessel')
+  }
+}
+
+export const createEquipment = async (dto: EquipmentDto): Promise<EquipmentDto> => {
+  try {
+    const response = await axios.post<EquipmentDto>(EQUIPMENT_URL, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error creating equipment:', error)
+    throw new Error(error.response?.data?.message || 'Error creating equipment')
+  }
+}
+
+export const updateEquipment = async (id: number, dto: EquipmentDto): Promise<EquipmentDto> => {
+  try {
+    const response = await axios.put<EquipmentDto>(`${EQUIPMENT_URL}/${id}`, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error updating equipment:', error)
+    throw new Error(error.response?.data?.message || 'Error updating equipment')
+  }
+}
+
+export const deleteEquipment = async (id: number): Promise<void> => {
+  try {
+    await axios.delete(`${EQUIPMENT_URL}/${id}`)
+  } catch (error: any) {
+    console.error('Error deleting equipment:', error)
+    throw new Error(error.response?.data?.message || 'Error deleting equipment')
+  }
+}
+
+// ——— Equipment Component APIs —————————————————————————————————————————————————————————
+
+export const getEquipmentComponents = async (q?: string): Promise<EquipmentComponentDto[]> => {
+  try {
+    const params = q ? { q } : {}
+    const response = await axios.get<EquipmentComponentDto[]>(EQUIPMENT_COMPONENTS_URL, { params })
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching equipment components:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching equipment components')
+  }
+}
+
+export const getEquipmentComponentsByEquipment = async (equipmentId: number): Promise<EquipmentComponentDto[]> => {
+  try {
+    const response = await axios.get<EquipmentComponentDto[]>(`${EQUIPMENT_COMPONENTS_URL}/by-equipment/${equipmentId}`)
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching equipment components by equipment:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching equipment components by equipment')
+  }
+}
+
+export const createEquipmentComponent = async (dto: EquipmentComponentDto): Promise<EquipmentComponentDto> => {
+  try {
+    const response = await axios.post<EquipmentComponentDto>(EQUIPMENT_COMPONENTS_URL, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error creating equipment component:', error)
+    throw new Error(error.response?.data?.message || 'Error creating equipment component')
+  }
+}
+
+export const updateEquipmentComponent = async (id: number, dto: EquipmentComponentDto): Promise<EquipmentComponentDto> => {
+  try {
+    const response = await axios.put<EquipmentComponentDto>(`${EQUIPMENT_COMPONENTS_URL}/${id}`, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error updating equipment component:', error)
+    throw new Error(error.response?.data?.message || 'Error updating equipment component')
+  }
+}
+
+export const deleteEquipmentComponent = async (id: number): Promise<void> => {
+  try {
+    await axios.delete(`${EQUIPMENT_COMPONENTS_URL}/${id}`)
+  } catch (error: any) {
+    console.error('Error deleting equipment component:', error)
+    throw new Error(error.response?.data?.message || 'Error deleting equipment component')
+  }
+}
+
+// ——— Subcomponent APIs (for Machinery hierarchy) —————————————————————————————————————————
+
+export const getSubcomponentsByComponent = async (componentId: number): Promise<SubcomponentDto[]> => {
+  try {
+    const response = await axios.get<SubcomponentDto[]>(SUBCOMPONENTS_URL, {
+      params: { equipmentComponentId: componentId }
+    })
+    return Array.isArray(response.data) ? response.data : []
+  } catch (error: any) {
+    console.error('Error fetching subcomponents by component:', error)
+    return []
+  }
+}
+
+export const createSubcomponent = async (dto: SubcomponentDto): Promise<SubcomponentDto> => {
+  try {
+    const response = await axios.post<SubcomponentDto>(SUBCOMPONENTS_URL, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error creating subcomponent:', error)
+    throw new Error(error.response?.data?.message || 'Error creating subcomponent')
+  }
+}
+
+export const updateSubcomponent = async (id: number, dto: SubcomponentDto): Promise<SubcomponentDto> => {
+  try {
+    const response = await axios.put<SubcomponentDto>(`${SUBCOMPONENTS_URL}/${id}`, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error updating subcomponent:', error)
+    throw new Error(error.response?.data?.message || 'Error updating subcomponent')
+  }
+}
+
+export const deleteSubcomponent = async (id: number): Promise<void> => {
+  try {
+    await axios.delete(`${SUBCOMPONENTS_URL}/${id}`)
+  } catch (error: any) {
+    console.error('Error deleting subcomponent:', error)
+    throw new Error(error.response?.data?.message || 'Error deleting subcomponent')
+  }
+}
+
+// ——— Parts by Subcomponent (reusing Inventory API) —————————————————————————
+
+export const getPartsBySubcomponent = async (subcomponentId: number): Promise<PartDto[]> => {
+  try {
+    const res = await axios.get<PartDto[]>(`${PARTS_URL}/by-subcomponent/${subcomponentId}`)
+    return Array.isArray(res.data) ? res.data : []
+  } catch (error: any) {
+    console.error('Error fetching parts by subcomponent:', error)
+    return []
+  }
+}
+
+export const getPartsByVessel = async (vesselId: number): Promise<PartDto[]> => {
+  try {
+    const res = await axios.get<PartDto[]>(`${PARTS_URL}`, {
+      params: { vesselId }
+    })
+    return Array.isArray(res.data) ? res.data : []
+  } catch (error: any) {
+    console.error('Error fetching parts by vessel:', error)
+    return []
+  }
+}
+
+export const createPartForSubcomponent = async (payload: { subcomponentId: number; name: string; code?: string }): Promise<PartDto> => {
+  try {
+    const dto = {
+      name: payload.name,
+      code: payload.code,
+      subcomponent: { id: payload.subcomponentId },
+    }
+    const res = await axios.post<PartDto>(PARTS_URL, dto)
+    return res.data
+  } catch (error: any) {
+    console.error('Error creating part:', error)
+    throw new Error(error.response?.data?.message || 'Error creating part')
+  }
+}
+
+export const updatePart = async (id: number, dto: PartDto): Promise<PartDto> => {
+  try {
+    const response = await axios.put<PartDto>(`${PARTS_URL}/${id}`, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error updating part:', error)
+    throw new Error(error.response?.data?.message || 'Error updating part')
+  }
+}
+
+export const deletePart = async (id: number): Promise<void> => {
+  try {
+    await axios.delete(`${PARTS_URL}/${id}`)
+  } catch (error: any) {
+    console.error('Error deleting part:', error)
+    throw new Error(error.response?.data?.message || 'Error deleting part')
+  }
+}
+
+// ——— Machinery Upload APIs ——————————————————————————————————————————————————————————
+
+const MACHINERY_UPLOAD_URL = `${API_URL}/machinery/upload`
+
+export interface BulkUploadResult {
+  totalRows: number
+  successCount: number
+  errorCount: number
+  errors: BulkUploadError[]
+}
+
+export interface BulkUploadError {
+  rowNumber: number
+  message: string
+  counterName?: string
+  readingDate?: string
+  value?: string
+}
+
+export const uploadMachinery = async (file: File, vesselId: number): Promise<BulkUploadResult> => {
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('vesselId', vesselId.toString())
+    
+    const response = await axios.post<BulkUploadResult>(MACHINERY_UPLOAD_URL, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  } catch (error: any) {
+    console.error('Error uploading machinery:', error)
+    throw new Error(error.response?.data?.message || 'Error uploading machinery')
+  }
+}
+
+export const downloadMachineryTemplate = async (): Promise<Blob> => {
+  try {
+    const response = await axios.get(`${MACHINERY_UPLOAD_URL}/template`, {
+      responseType: 'blob',
+    })
+    return response.data
+  } catch (error: any) {
+    console.error('Error downloading template:', error)
+    throw new Error(error.response?.data?.message || 'Error downloading template')
+  }
+}
+
+export interface MachineryUploadPreview {
+  totalRows: number
+  validRows: number
+  errorRows: number
+  rows: PreviewRow[]
+  errors: BulkUploadError[]
+  hasMissingParts?: boolean
+  missingPartsBranches?: MissingPartsBranch[]
+}
+
+export interface PreviewRow {
+  rowNumber: number
+  action: 'CREATE' | 'UPDATE'
+  entityType: 'EQUIPMENT' | 'COMPONENT' | 'SUBCOMPONENT' | 'PART' | 
+              'COMPONENT_INSTANCE' | 'SUBCOMPONENT_INSTANCE' | 
+              'COMPONENT_PM_TEMPLATE' | 'SUBCOMPONENT_PM_TEMPLATE' | 'MULTIPLICITY_INSTANCE'
+  entityName: string
+  entityCode?: string | null
+  parentEntity?: string | null
+  status: 'NEW' | 'EXISTS' | 'ERROR'
+  message: string
+}
+
+export interface MissingPartsBranch {
+  equipmentCode?: string | null
+  equipmentName?: string | null
+  componentCode?: string | null
+  componentName?: string | null
+  subComponentCode?: string | null
+  subComponentName?: string | null
+  instanceNumber?: number | null
+  missingParts?: MissingPartInfo[]
+}
+
+export interface MissingPartInfo {
+  itemShortDescription?: string | null
+  itemLongDescription?: string | null
+  drawNo?: string | null
+  drawingPositionNo?: string | null
+  maker?: string | null
+  partLocation?: string | null
+}
+
+export const previewMachineryUpload = async (file: File, vesselId: number): Promise<MachineryUploadPreview> => {
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('vesselId', vesselId.toString())
+    
+    const response = await axios.post<MachineryUploadPreview>(`${MACHINERY_UPLOAD_URL}/preview`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  } catch (error: any) {
+    console.error('Error previewing machinery upload:', error)
+    throw new Error(error.response?.data?.message || 'Error previewing machinery upload')
+  }
+}
+
+
+// ——— Vessel Location APIs ————————————————————————————————————————————————————
+
+const VESSEL_LOCATION_URL = `${API_URL}/vessel-locations`
+
+export interface VesselLocationDto {
+  id?: number
+  vesselId: number
+  code: string
+  description?: string
+  comments?: string
+}
+
+export const getVesselLocations = async (vesselId: number): Promise<VesselLocationDto[]> => {
+  try {
+    const response = await axios.get<VesselLocationDto[]>(`${VESSEL_LOCATION_URL}/by-vessel/${vesselId}`)
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching vessel locations:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching vessel locations')
+  }
+}
+
+export const getVesselLocationById = async (id: number): Promise<VesselLocationDto> => {
+  try {
+    const response = await axios.get<VesselLocationDto>(`${VESSEL_LOCATION_URL}/${id}`)
+    return response.data
+  } catch (error: any) {
+    console.error('Error fetching vessel location:', error)
+    throw new Error(error.response?.data?.message || 'Error fetching vessel location')
+  }
+}
+
+export const createVesselLocation = async (dto: VesselLocationDto): Promise<VesselLocationDto> => {
+  try {
+    const response = await axios.post<VesselLocationDto>(VESSEL_LOCATION_URL, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error creating vessel location:', error)
+    throw new Error(error.response?.data?.message || 'Error creating vessel location')
+  }
+}
+
+export const updateVesselLocation = async (id: number, dto: VesselLocationDto): Promise<VesselLocationDto> => {
+  try {
+    const response = await axios.put<VesselLocationDto>(`${VESSEL_LOCATION_URL}/${id}`, dto)
+    return response.data
+  } catch (error: any) {
+    console.error('Error updating vessel location:', error)
+    throw new Error(error.response?.data?.message || 'Error updating vessel location')
+  }
+}
+
+export const deleteVesselLocation = async (id: number): Promise<void> => {
+  try {
+    await axios.delete(`${VESSEL_LOCATION_URL}/${id}`)
+  } catch (error: any) {
+    console.error('Error deleting vessel location:', error)
+    throw new Error(error.response?.data?.message || 'Error deleting vessel location')
+  }
 }
 

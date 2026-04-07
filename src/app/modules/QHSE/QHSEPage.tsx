@@ -15,8 +15,12 @@ import AuditPlanning from './components/AuditPlanning';
 import AuditFindingIndex from './components/AuditFindingIndex';
 import NearMissReports from './components/NearMissReports';
 import RiskAssessmentForms from './components/RiskAssessmentForms/RiskAssessmentForms';
+import TechnicalFormsPage from '../Technical/components/Forms/TechnicalFormsPage';
 
 const QHSEPage = () => {
+    const { currentUser } = useAuth()
+    const roleType = currentUser?.role?.roleType || (currentUser as any)?.role?.roleName
+    const isCrew = roleType === 'CREW'
     return (
         <Routes>
             <Route element={<Outlet />}>
@@ -36,6 +40,7 @@ const QHSEPage = () => {
                     path='manuals-and-plans'
                     element={<ManualsAndPlans />}
                 />
+                <Route path='forms-checklists' element={<TechnicalFormsPage />} />
 
                 <Route
                     path='ncr-index'  
@@ -87,6 +92,10 @@ const QHSEPage = () => {
         path='masters-sms-review'
         element={<ComingSoon title="Master's SMS Review" />}
       />
+      {/* <Route
+        path='accident-near-miss-reports'
+        element={<IncidentReport />}
+      /> */}
       <Route
         path='accident-near-miss-reports'
         element={<NearMissReports />}

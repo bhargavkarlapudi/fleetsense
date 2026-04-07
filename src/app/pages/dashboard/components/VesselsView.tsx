@@ -23,7 +23,7 @@ const VesselsView: React.FC<VesselsViewProps> = ({ setFilteredVessels }) => {
     const { currentUser } = useAuth()
     const roleId = currentUser?.role?.id;
     const roleEntityId = currentUser?.roleEntityId;
-    /** OPERATOR BEHAVIOR SPLIT **/
+        /** OPERATOR BEHAVIOR SPLIT **/
 const companyGroupAdminId =
   (currentUser as any)?.companyGroupAdminId ??
   (currentUser as any)?.companyGroupAdmin?.id ??

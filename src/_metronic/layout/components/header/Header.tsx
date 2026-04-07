@@ -36,7 +36,7 @@ const Header: FC = () => {
         >
           <div>
             {/* <KTSVG path='/media/logos/polar_marine_logo_1.svg' className='svg-icon-4x' /> */}
-            <KTSVG path='/media/logos/ShipsEdge_light_mode_logo.svg' className='svg-icon-xxl-5tx'/>
+            <KTSVG path='/media/logos/ELECKMECSOLUTIONS_light_mode_logo.svg' className='svg-icon-xxl-5tx'/>
             {/* {roleEntityName} */}
           </div>
 

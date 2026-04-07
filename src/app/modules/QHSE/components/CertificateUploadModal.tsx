@@ -53,13 +53,17 @@ const operatorActsLikeSuperadmin = isOperator && !currentUser?.companyGroupAdmin
 const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdminId
   
   const [formData, setFormData] = useState<{
-    certificateName: string
+    certificateCategoryId: string
+    certificateNameId: string
+    certificateName: string // Legacy, kept for backward compatibility
     dateOfIssue: string
     dateOfExpiry: string
     file: File | null
     vesselId: string
     remark: string
   }>({
+    certificateCategoryId: '',
+    certificateNameId: '',
     certificateName: '',
     dateOfIssue: '',
     dateOfExpiry: '',
@@ -68,16 +72,88 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
     remark: '',
   })
   const [vessels, setVessels] = useState<Vessel[]>([])
+  const [categories, setCategories] = useState<Array<{id: number, name: string}>>([])
+  const [certificateNames, setCertificateNames] = useState<Array<{id: number, name: string, categoryId: number}>>([])
+  const [filteredCertificateNames, setFilteredCertificateNames] = useState<Array<{id: number, name: string}>>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isLoadingVessels, setIsLoadingVessels] = useState(false)
+  const [isLoadingLookups, setIsLoadingLookups] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  // Fetch vessels when modal opens
+  // Fetch vessels and lookups when modal opens
   useEffect(() => {
     if (isOpen) {
       fetchVessels()
+      fetchCertificateLookups()
     }
   }, [isOpen])
+  
+  // Re-fetch certificate names when vessel changes (to exclude used ones)
+  useEffect(() => {
+    if (isOpen && formData.vesselId) {
+      fetchCertificateLookups()
+      // Reset selections when vessel changes
+      setFormData(prev => ({...prev, certificateCategoryId: '', certificateNameId: ''}))
+      setFilteredCertificateNames([])
+    }
+  }, [formData.vesselId, isOpen])
+  
+  // Filter certificate names when category changes
+  useEffect(() => {
+    if (formData.certificateCategoryId) {
+      const filtered = certificateNames
+        .filter(cn => cn.categoryId === Number(formData.certificateCategoryId))
+        .map(cn => ({id: cn.id, name: cn.name}))
+      setFilteredCertificateNames(filtered)
+      // Reset certificate name selection when category changes
+      setFormData(prev => ({...prev, certificateNameId: ''}))
+    } else {
+      setFilteredCertificateNames([])
+    }
+  }, [formData.certificateCategoryId, certificateNames])
+  
+  const fetchCertificateLookups = async () => {
+    setIsLoadingLookups(true)
+    try {
+      const token = auth?.auth.jwt
+      const vesselId = formData.vesselId || selectedVesselId
+      
+      // Build query params - exclude used certificates if vessel is selected (for new uploads)
+      const namesParams = new URLSearchParams()
+      if (vesselId) {
+        namesParams.append('vesselId', vesselId)
+        namesParams.append('excludeUsed', 'true') // Always exclude used for new uploads
+      }
+      
+      const [categoriesRes, namesRes] = await Promise.all([
+        fetch(`${API_URL}/qhse/certificates/categories`, {
+          headers: {Authorization: `Bearer ${token}`}
+        }),
+        fetch(`${API_URL}/qhse/certificates/names?${namesParams.toString()}`, {
+          headers: {Authorization: `Bearer ${token}`}
+        })
+      ])
+      
+      if (categoriesRes.ok) {
+        const cats = await categoriesRes.json()
+        setCategories(cats.map((c: any) => ({id: c.id, name: c.name})))
+      }
+      
+      if (namesRes.ok) {
+        const names = await namesRes.json()
+        setCertificateNames(names.map((n: any) => ({
+          id: n.id,
+          name: n.name,
+          categoryId: n.categoryId
+        })))
+      }
+    } catch (error) {
+      console.error('Failed to fetch certificate lookups:', error)
+      toast.error('Failed to load certificate options')
+    } finally {
+      setIsLoadingLookups(false)
+    }
+  }
 
   useEffect(() => {
   if (isOpen && isCrew && currentUser?.vessel?.id) {
@@ -102,7 +178,7 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
       
 
       const vesselsForCompany = vesselList.filter((vessel) => {
-        const isActive = vessel.active
+  const isActive = vessel.active
 
   // Superadmin OR Operator acting like Superadmin → all active
   if (roleId === 1 || operatorActsLikeSuperadmin) {
@@ -134,6 +210,8 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
 
   const resetForm = () => {
     setFormData({
+      certificateCategoryId: '',
+      certificateNameId: '',
       certificateName: '',
       dateOfIssue: '',
       dateOfExpiry: '',
@@ -141,14 +219,18 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
       vesselId: '',
       remark: '',
     })
+    setFilteredCertificateNames([])
     setErrors({})
   }
 
   const validateForm = () => {
   const newErrors: Record<string, string> = {}
 
-  if (!formData.certificateName.trim()) {
-    newErrors.certificateName = 'Certificate name is required'
+  if (!formData.certificateCategoryId) {
+    newErrors.certificateCategoryId = 'Certificate category is required'
+  }
+  if (!formData.certificateNameId) {
+    newErrors.certificateNameId = 'Certificate name is required'
   }
   if (!isCrew && !formData.vesselId) {
   newErrors.vesselId = 'Please select a vessel'
@@ -199,7 +281,12 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
       const token = auth?.auth.jwt
 
       const form = new FormData()
-      form.append('certificateName', formData.certificateName)
+      // Use certificateNameId if available, otherwise fallback to certificateName (legacy)
+      if (formData.certificateNameId) {
+        form.append('certificateNameId', formData.certificateNameId)
+      } else if (formData.certificateName) {
+        form.append('certificateName', formData.certificateName)
+      }
       form.append('dateOfIssue', formData.dateOfIssue)
       if (formData.dateOfExpiry) {
   form.append('dateOfExpiry', formData.dateOfExpiry)
@@ -293,23 +380,61 @@ const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdmi
               </div>
               )}
 
+              {/* Certificate Category */}
+              <div className='mb-6'>
+                <label className='required fw-semibold fs-6 mb-2'>Certificate Category</label>
+                <select
+                  className={`form-select form-select-solid ${
+                    errors.certificateCategoryId ? 'is-invalid' : ''
+                  }`}
+                  value={formData.certificateCategoryId}
+                  onChange={(e) =>
+                    setFormData((prev) => ({...prev, certificateCategoryId: e.target.value, certificateNameId: ''}))
+                  }
+                  disabled={isSubmitting || isLoadingLookups}
+                >
+                  <option value=''>
+                    {isLoadingLookups ? 'Loading categories...' : 'Select Category'}
+                  </option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                {errors.certificateCategoryId && (
+                  <div className='invalid-feedback'>{errors.certificateCategoryId}</div>
+                )}
+              </div>
+
               {/* Certificate Name */}
               <div className='mb-6'>
                 <label className='required fw-semibold fs-6 mb-2'>Certificate Name</label>
-                <input
-                  type='text'
-                  className={`form-control form-control-solid ${
-                    errors.certificateName ? 'is-invalid' : ''
+                <select
+                  className={`form-select form-select-solid ${
+                    errors.certificateNameId ? 'is-invalid' : ''
                   }`}
-                  placeholder='Enter certificate name'
-                  value={formData.certificateName}
+                  value={formData.certificateNameId}
                   onChange={(e) =>
-                    setFormData((prev) => ({...prev, certificateName: e.target.value}))
+                    setFormData((prev) => ({...prev, certificateNameId: e.target.value}))
                   }
-                  disabled={isSubmitting}
-                />
-                {errors.certificateName && (
-                  <div className='invalid-feedback'>{errors.certificateName}</div>
+                  disabled={isSubmitting || isLoadingLookups || !formData.certificateCategoryId}
+                >
+                  <option value=''>
+                    {!formData.certificateCategoryId 
+                      ? 'Select category first'
+                      : isLoadingLookups 
+                      ? 'Loading certificates...' 
+                      : 'Select Certificate Name'}
+                  </option>
+                  {filteredCertificateNames.map((certName) => (
+                    <option key={certName.id} value={certName.id}>
+                      {certName.name}
+                    </option>
+                  ))}
+                </select>
+                {errors.certificateNameId && (
+                  <div className='invalid-feedback'>{errors.certificateNameId}</div>
                 )}
               </div>
 

@@ -23,6 +23,14 @@ interface FolderTreeItemProps {
   selectedFolderId?: number
   onToggleFolder: (id: number, level: number) => void // Add level parameter
   onSelectFolder: (item: DocumentItem) => void
+  onDeleteFolder: (item: DocumentItem) => void
+  onStartRename: (item: DocumentItem) => void
+  onRenameChange: (value: string) => void
+  onCancelRename: () => void
+  onCommitRename: (item: DocumentItem) => void
+  renamingId: number | null
+  renamingValue: string
+  renamingBusy?: boolean
 }
 
 const FolderTreeItem: FC<FolderTreeItemProps> = ({
@@ -32,10 +40,19 @@ const FolderTreeItem: FC<FolderTreeItemProps> = ({
   selectedFolderId,
   onToggleFolder,
   onSelectFolder,
+  onDeleteFolder,
+  onStartRename,
+  onRenameChange,
+  onCancelRename,
+  onCommitRename,
+  renamingId,
+  renamingValue,
+  renamingBusy,
 }) => {
   const isExpanded = expandedFolders.has(item.id)
   const isSelected = selectedFolderId === item.id
   const hasChildren = item.children && item.children.length > 0
+  const isRenaming = renamingId === item.id
 
   // Handle folder click - both expand/collapse AND select
   const handleFolderClick = () => {
@@ -102,26 +119,115 @@ const FolderTreeItem: FC<FolderTreeItemProps> = ({
         />
 
         {/* Title */}
-        <span
-          className={`fw-semibold ${
-            isSelected ? 'text-primary' : 'text-gray-800'
-          } fs-6 flex-grow-1`}
-          style={{
-            whiteSpace: 'nowrap', // keep in one line
-            overflow: 'hidden', // hide overflow
-            textOverflow: 'ellipsis', // show ...
-            display: 'block', // needed for ellipsis
-            maxWidth: '250px', // control max length before cutting
-          }}
-          title={item.title} // tooltip with full title
-        >
-          {item.title}
-        </span>
-
-        {/* Children Count Badge */}
-        {hasChildren && (
-          <span className='badge badge-light-primary ms-2'>{item.children?.length}</span>
+        {isRenaming ? (
+          <div className='d-flex align-items-center gap-2 flex-grow-1' onClick={(e) => e.stopPropagation()}>
+            <input
+              className='form-control form-control-sm'
+              value={renamingValue}
+              onChange={(e) => onRenameChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  onCommitRename(item)
+                }
+                if (e.key === 'Escape') {
+                  onCancelRename()
+                }
+              }}
+              autoFocus
+              style={{ maxWidth: '200px' }}
+            />
+            <button
+              type='button'
+              className='btn btn-sm p-0'
+              style={{ backgroundColor: 'transparent', border: 'none' }}
+              title='Save'
+              disabled={renamingBusy}
+              onClick={(e) => {
+                e.stopPropagation()
+                onCommitRename(item)
+              }}
+            >
+              <KTSVG path='/media/icons/duotune/general/gen043.svg' className='svg-icon-4 text-success' />
+            </button>
+            <button
+              type='button'
+              className='btn btn-sm p-0'
+              style={{ backgroundColor: 'transparent', border: 'none' }}
+              title='Cancel'
+              onClick={(e) => {
+                e.stopPropagation()
+                onCancelRename()
+              }}
+            >
+              <KTSVG path='/media/icons/duotune/general/gen040.svg' className='svg-icon-4 text-muted' />
+            </button>
+          </div>
+        ) : (
+          <span
+            className={`fw-semibold ${
+              isSelected ? 'text-primary' : 'text-gray-800'
+            } fs-6 flex-grow-1`}
+            style={{
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              display: 'block',
+              maxWidth: '250px',
+            }}
+            title={item.title}
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              onStartRename(item)
+            }}
+          >
+            {item.title}
+          </span>
         )}
+
+        <div className='d-flex align-items-center gap-2'>
+          {/* Children Count Badge */}
+          {hasChildren && (
+            <span className='badge badge-light-primary'>{item.children?.length}</span>
+          )}
+          {!isRenaming && (
+            <button
+              type='button'
+              className='btn btn-sm p-0'
+              style={{
+                backgroundColor: 'transparent',
+                border: 'none',
+                outline: 'none',
+                boxShadow: 'none',
+              }}
+              title='Rename'
+              onClick={(e) => {
+                e.stopPropagation()
+                onStartRename(item)
+              }}
+            >
+              <KTSVG path='/media/icons/duotune/general/gen055.svg' className='svg-icon-4 text-muted' />
+            </button>
+          )}
+          {item.type === 'folder' && (
+            <button
+              type='button'
+              className='btn btn-sm p-0'
+              style={{
+                backgroundColor: 'transparent',
+                border: 'none',
+                outline: 'none',
+                boxShadow: 'none',
+              }}
+              title='Delete folder'
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteFolder(item)
+              }}
+            >
+              <KTSVG path='/media/icons/duotune/general/gen027.svg' className='svg-icon-4 text-danger' />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Render Children */}
@@ -143,6 +249,14 @@ const FolderTreeItem: FC<FolderTreeItemProps> = ({
               selectedFolderId={selectedFolderId}
               onToggleFolder={onToggleFolder}
               onSelectFolder={onSelectFolder}
+              onDeleteFolder={onDeleteFolder}
+              onStartRename={onStartRename}
+              onRenameChange={onRenameChange}
+              onCancelRename={onCancelRename}
+              onCommitRename={onCommitRename}
+              renamingId={renamingId}
+              renamingValue={renamingValue}
+              renamingBusy={renamingBusy}
             />
           ))}
         </div>

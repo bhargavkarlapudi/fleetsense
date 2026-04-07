@@ -23,7 +23,7 @@ const PrivateRoutes: FC = () => {
       <Route path='auth/*' element={<Navigate to='/dashboard' />} />
 
       <Route element={<MasterLayout />}>
-            <Route path='operations/position-reports' element={<PositionReportsTabs />} />
+                  <Route path='operations/position-reports' element={<PositionReportsTabs />} />
         <Route path='operations/*' element={<OperationsPage />} />
         <Route path='crewing/*' element={<CrewingPage />} />
         <Route path='crewingtest/*' element={<CrewingTestPage />} />

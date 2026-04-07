@@ -31,7 +31,7 @@ interface ShipMarker {
 
 interface MapViewProps {
   vesselMarkers: Vessel[];
-  height?: string | number;      // NEW
+    height?: string | number;      // NEW
   compact?: boolean;             // NEW
 }
 
@@ -1070,7 +1070,7 @@ const MapView: React.FC<MapViewProps> = ({ vesselMarkers, height = '100%', compa
 
         <div ref={deckOverlayRef} style={{ position:'absolute', inset:0, pointerEvents:'none', zIndex:10 }} />
       </div>
-      {/* Controls */}
+            {/* Controls */}
       {!compact && (
         <>
       <div className="custom-map-controls">
@@ -1145,7 +1145,7 @@ const MapView: React.FC<MapViewProps> = ({ vesselMarkers, height = '100%', compa
           UTC 13:40   LT 21:40
         </button>
       </div>
-       </>
+             </>
       )}
     </div>
 

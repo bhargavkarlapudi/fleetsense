@@ -23,6 +23,17 @@ const CargoPage: FC = () => {
   const roleId: number =
     Number((auth?.userDetails as any)?.roleId ?? (currentUser?.role?.id ?? 0)) || 0
   const isCrew = roleId === 4
+  const myCgaId: number | null =
+    (currentUser?.companyGroupAdminId ??
+      (currentUser?.companyGroupAdmin as any)?.id ??
+      (roleId === 5 ? (currentUser as any)?.roleEntityId : null)) ?? null
+  const isOperator = roleId === 6
+  const isSuperadmin = roleId === 1
+  const operatorActsLikeSuperadmin = isOperator && !myCgaId
+  const operatorActsLikeGroupAdmin = isOperator && !!myCgaId
+  const isTopLevel = isSuperadmin || operatorActsLikeSuperadmin
+  const showCompanyFilter = isTopLevel
+  const showSubcompanyFilter = !isCrew && roleId !== 2
 
   const [cargoData, setCargoData] = useState<CargoOperationPageResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -37,7 +48,6 @@ const CargoPage: FC = () => {
   type SortColumn =
     | ''
     | 'vesselName'
-    | 'voyageNumber'
     | 'breakupType'
     | 'detailsCount'
     | 'remarks'
@@ -116,10 +126,16 @@ const CargoPage: FC = () => {
     }
   }
 
+  const effectiveCompanyId = isTopLevel
+    ? (filters.companyId ?? null)
+    : roleId === 5 || operatorActsLikeGroupAdmin
+      ? myCgaId
+      : null
+
   const vesselsForFilters = useMemo(() => {
     let list = vessels
-    if (filters.companyId) {
-      const cid = Number(filters.companyId)
+    const cid = effectiveCompanyId != null ? Number(effectiveCompanyId) : null
+    if (cid != null) {
       list = list.filter((v: any) =>
         Number(v.companyGroupAdmin?.id ?? v.companyGroupId) === cid
       )
@@ -131,17 +147,26 @@ const CargoPage: FC = () => {
       )
     }
     return list
-  }, [vessels, filters.companyId, subcompanyId])
+  }, [vessels, effectiveCompanyId, subcompanyId])
 
   const subcompaniesForChosenCompany = useMemo(() => {
-    if (!filters.companyId) return []
-    const cid = Number(filters.companyId)
+    if (effectiveCompanyId == null) return []
+    const cid = Number(effectiveCompanyId)
     return subcompanies.filter((sc) => sc.companyId === cid)
-  }, [filters.companyId, subcompanies])
+  }, [effectiveCompanyId, subcompanies])
 
-  // Auto-select default vessel once (like Defect List)
+  // Crew: lock vessel to user's vessel
   useEffect(() => {
-    if (didAutoSelectVessel) return
+    if (!isCrew) return
+    const vId = (currentUser as any)?.vessel?.id ?? currentUser?.vessel?.id
+    if (vId == null) return
+    setFilters((prev) => (prev.vesselId === vId ? prev : { ...prev, vesselId: vId }))
+    setDidAutoSelectVessel(true)
+  }, [isCrew, currentUser])
+
+  // Auto-select default vessel once (like Defect List) — skip for crew
+  useEffect(() => {
+    if (isCrew || didAutoSelectVessel) return
     const firstVessel = vesselsForFilters[0]
     if (!firstVessel) return
 
@@ -153,13 +178,16 @@ const CargoPage: FC = () => {
       }
     })
     setDidAutoSelectVessel(true)
-  }, [vesselsForFilters, didAutoSelectVessel])
+  }, [isCrew, vesselsForFilters, didAutoSelectVessel])
 
   const loadCargoOperations = async () => {
     setLoading(true)
     try {
+      const companyIdForApi =
+        effectiveCompanyId != null ? Number(effectiveCompanyId) : filters.companyId ?? undefined
       const data = await getCargoOperations({
         ...filters,
+        companyId: companyIdForApi ?? undefined,
         page: currentPage - 1, // backend is 0-based, UI is 1-based
         size: pageSize,
       })
@@ -180,9 +208,12 @@ const CargoPage: FC = () => {
   }
 
   const handleClearFilters = () => {
+    const crewVesselId = isCrew
+      ? ((currentUser as any)?.vessel?.id ?? currentUser?.vessel?.id) ?? null
+      : null
     setFilters({
       companyId: null,
-      vesselId: null,
+      vesselId: crewVesselId,
       breakupType: null,
       fromDate: null,
       toDate: null,
@@ -246,10 +277,6 @@ const CargoPage: FC = () => {
         case 'vesselName':
           aVal = a.vesselName || ''
           bVal = b.vesselName || ''
-          break
-        case 'voyageNumber':
-          aVal = a.voyageNumber || ''
-          bVal = b.voyageNumber || ''
           break
         case 'breakupType':
           aVal = a.breakupType || ''
@@ -323,8 +350,8 @@ const CargoPage: FC = () => {
             <div className='card-body py-4 bg-white border-top'>
               {/* Filters */}
               <div className='row gx-3 gy-3 mb-4'>
-                {/* Company */}
-                {!isCrew && (
+                {/* Company — only for top-level (Superadmin / Operator without CGA) */}
+                {showCompanyFilter && (
                   <div className='col-md-2'>
                     <label className='form-label fw-semibold fs-7' style={{ color: '#A1A5B7' }}>
                       Company
@@ -356,8 +383,8 @@ const CargoPage: FC = () => {
                   </div>
                 )}
 
-                {/* Subcompany (conditional) */}
-                {!isCrew && subcompaniesForChosenCompany.length > 0 && (
+                {/* Subcompany — for top-level (when company selected) or Company (role 5); hidden for Subcompany (role 2) */}
+                {showSubcompanyFilter && subcompaniesForChosenCompany.length > 0 && (
                   <div className='col-md-2'>
                     <label className='form-label fw-semibold fs-7' style={{ color: '#A1A5B7' }}>
                       Subcompany
@@ -388,36 +415,38 @@ const CargoPage: FC = () => {
                   </div>
                 )}
 
-                {/* Vessel (required in forms; optional in filters) */}
-                <div className='col-md-2'>
-                  <label className='form-label fw-semibold fs-7' style={{ color: '#A1A5B7' }}>
-                    Vessel
-                  </label>
-                  <select
-                    className='form-select'
-                    style={{
-                      border: '1px solid #E4E6EF',
-                      borderRadius: '6px',
-                      fontSize: '14px',
-                      padding: '8px 12px',
-                      color: '#5E6278',
-                    }}
-                    value={filters.vesselId || ''}
-                    onChange={(e) =>
-                      handleFilterChange(
-                        'vesselId',
-                        e.target.value ? Number(e.target.value) : null
-                      )
-                    }
-                  >
-                    <option value=''>All Vessels</option>
-                    {vesselsForFilters.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.fleet_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {/* Vessel — hidden for crew (vessel is fixed) */}
+                {!isCrew && (
+                  <div className='col-md-2'>
+                    <label className='form-label fw-semibold fs-7' style={{ color: '#A1A5B7' }}>
+                      Vessel
+                    </label>
+                    <select
+                      className='form-select'
+                      style={{
+                        border: '1px solid #E4E6EF',
+                        borderRadius: '6px',
+                        fontSize: '14px',
+                        padding: '8px 12px',
+                        color: '#5E6278',
+                      }}
+                      value={filters.vesselId || ''}
+                      onChange={(e) =>
+                        handleFilterChange(
+                          'vesselId',
+                          e.target.value ? Number(e.target.value) : null
+                        )
+                      }
+                    >
+                      <option value=''>All Vessels</option>
+                      {vesselsForFilters.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.fleet_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <div className='col-md-2'>
                   <label className='form-label fw-semibold fs-7' style={{ color: '#A1A5B7' }}>
@@ -529,6 +558,7 @@ const CargoPage: FC = () => {
                   <thead className='table-header text-start'>
                     <tr>
                       <th style={{ width: '60px' }}>Sr/No</th>
+                      {!isCrew && (
                       <th style={{ minWidth: '160px' }}>
                         <div className='d-flex align-items-center text-nowrap'>
                           <span className='me-1'>Vessel</span>
@@ -551,28 +581,7 @@ const CargoPage: FC = () => {
                           </button>
                         </div>
                       </th>
-                      <th style={{ minWidth: '140px' }}>
-                        <div className='d-flex align-items-center text-nowrap'>
-                          <span className='me-1'>Voyage</span>
-                          <button
-                            type='button'
-                            className='btn btn-link p-0 m-0 pb-1'
-                            onClick={() => handleSort('voyageNumber')}
-                            disabled={!cargoData?.content?.length}
-                          >
-                            <KTSVG
-                              path={`/media/map/sort-col-${
-                                sortColumn === 'voyageNumber'
-                                  ? sortOrder === 'asc'
-                                    ? 'up-black'
-                                    : 'down-black'
-                                  : 'grey'
-                              }.svg`}
-                              className='svg-icon-3'
-                            />
-                          </button>
-                        </div>
-                      </th>
+                      )}
                       <th style={{ minWidth: '140px' }}>
                         <div className='d-flex align-items-center text-nowrap'>
                           <span className='me-1'>Breakup Type</span>
@@ -669,7 +678,7 @@ const CargoPage: FC = () => {
                   <tbody className='table-body text-start'>
                     {loading ? (
                       <tr>
-                        <td colSpan={8} className='text-center py-5'>
+                        <td colSpan={isCrew ? 6 : 7} className='text-center py-5'>
                           <div className='spinner-border' role='status'>
                             <span className='visually-hidden'>Loading...</span>
                           </div>
@@ -677,7 +686,7 @@ const CargoPage: FC = () => {
                       </tr>
                     ) : !sortedContent.length ? (
                       <tr>
-                        <td colSpan={8} className='text-center text-muted py-5'>
+                        <td colSpan={isCrew ? 6 : 7} className='text-center text-muted py-5'>
                           No cargo operations found.
                         </td>
                       </tr>
@@ -687,10 +696,11 @@ const CargoPage: FC = () => {
                           <td className='text-center text-dark fs-6'>
                             {(currentPage - 1) * pageSize + index + 1}
                           </td>
+                          {!isCrew && (
                           <td className='text-dark fw-semibold fs-6'>
                             {cargo.vesselName || 'N/A'}
                           </td>
-                          <td className='text-dark fs-6'>{cargo.voyageNumber || 'N/A'}</td>
+                          )}
                           <td className='text-dark fs-6'>{cargo.breakupType}</td>
                           <td className='text-dark fs-6'>
                             {cargo.details?.length || 0}
@@ -960,6 +970,11 @@ const CargoPage: FC = () => {
         companies={companies}
         subcompanies={subcompanies}
         vessels={vessels}
+        isCrew={isCrew}
+        userVesselId={(currentUser as any)?.vessel?.id ?? currentUser?.vessel?.id ?? null}
+        showCompanyFilter={showCompanyFilter}
+        showSubcompanyFilter={showSubcompanyFilter}
+        effectiveCompanyId={effectiveCompanyId != null ? Number(effectiveCompanyId) : null}
       />
       {selectedCargo && (
         <>
@@ -971,6 +986,7 @@ const CargoPage: FC = () => {
             }}
             cargo={selectedCargo}
             onSuccess={handleEditSuccess}
+            isCrew={isCrew}
           />
           <ViewCargoModal
             isOpen={isViewModalOpen}
@@ -979,6 +995,7 @@ const CargoPage: FC = () => {
               setSelectedCargo(null)
             }}
             cargo={selectedCargo}
+            isCrew={isCrew}
           />
         </>
       )}
