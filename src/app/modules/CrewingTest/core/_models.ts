@@ -1,7 +1,7 @@
 // /_models.ts
 
 export type DocumentSlot =
-  | 'CV'   
+  | 'CV'  
   | 'PASSPORT'
   | 'NATIONAL_CDC'
   | 'BIOMETRIC_SID'
@@ -439,7 +439,7 @@ export interface WatchkeepingCertificateRequest {
 export interface WatchkeepingCertificateResponse extends WatchkeepingCertificateRequest {
   id: number;
   crewId: number;
-      filePath?: string | null;
+    filePath?: string | null;
   fileName?: string | null;
   uploadedAt?: string | null;
 }
@@ -476,7 +476,7 @@ export interface CourseCertificate {
   dateOfIssue?: string | null;
   dateOfExpiry?: string | null;
   issuedBy?: string | null;
-      filePath?: string | null;
+    filePath?: string | null;
   fileName?: string | null;
   uploadedAt?: string | null;
 }
@@ -487,7 +487,7 @@ export interface CourseCertificateResponse extends CourseCertificate {
 }
 
 export interface SeaServiceRequest {
-    id?: number; // ✅ add this
+  id?: number; // ✅ add this
   serialNo: number;
   companyName?: string | null;
   vesselName?: string | null;
@@ -706,4 +706,55 @@ export interface CrewFlagDocument {
   fileName: string | null
   filePath: string | null // /uploads/...
   uploadedAt: string | null
+}
+
+
+export interface RollingWindow {
+  code: 'ROLLING_24H' | 'ROLLING_72H' | 'ROLLING_7D' | string
+  windowStart: string
+  windowEnd: string
+  totalWorkHours: number
+  totalRestHours: number
+  violated: boolean
+  description?: string | null
+  exceptions: string[]
+}
+
+export interface RollingExceptionResponse {
+  crewId: number
+  vesselId: number
+  sessionId: number | null
+  loginAt: string | null
+  asOf: string
+  windows: RollingWindow[]
+}
+
+export interface RollingMatrixViolation {
+  ruleCode?: string | null
+  description?: string | null
+  standard?: string | null
+  windowStartDate?: string | null
+  windowEndDate?: string | null
+}
+
+export interface RollingMatrixSummary {
+  id?: number | null
+  crewId: number
+  vesselId: number
+  summaryDate: string
+  totalWorkHours: number
+  totalRestHours: number
+  compliant: boolean
+  approved: boolean
+  violationCount: number
+  remarks?: string | null
+  violations?: RollingMatrixViolation[] | null
+}
+
+export interface RollingMatrixResponse {
+  start: string
+  end: string
+  regulation: 'stcw' | 'mlc' | string
+  asOf: string
+  summaries: RollingMatrixSummary[]
 }

@@ -136,3 +136,83 @@ export interface HistoryRecord {
   rank_id: number;
   username: string;
 }
+
+// Equipment Hierarchy Models
+export interface EquipmentDto {
+  id?: number;
+  vesselId: number;
+  vesselName?: string;
+  name: string;
+  code?: string;
+  shortForm?: string;
+  criticality?: boolean;
+  subHead?: string;
+  maker?: string;
+  model?: string;
+  serialNumber?: string;
+  installationDate?: string;
+  location?: string;
+  isClassCritical?: boolean;
+  isSurveyRelevant?: boolean;
+  vesselLocationId?: number;
+  vesselLocationDescription?: string;
+  equipmentFunctionDescription?: string;
+}
+
+export interface EquipmentComponentDto {
+  id?: number;
+  equipmentId: number;
+  equipmentName?: string;
+  equipmentCode?: string;
+  name: string;
+  code?: string;
+  description?: string;
+  componentCode?: string;
+  componentDescription?: string;
+  componentFunctionDescription?: string;
+  systemSerialNumber?: string;
+  systemParticulars?: string;
+  maker?: string;
+  hasOpenJob?: boolean | null;
+}
+
+export interface SubcomponentDto {
+  id?: number;
+  part?: PartDto; // PartDto
+  equipmentComponent?: EquipmentComponentDto;
+  name: string;
+  subComponentCode?: string;
+  subComponentFunctionDescription?: string;
+  subComponentParticulars?: string;
+  maker?: string;
+  hasOpenJob?: boolean | null;
+}
+
+export interface VesselMachineryCountsDto {
+  vesselId: number;
+  vesselName: string;
+  equipmentCount: number;
+  componentCount: number;
+  subcomponentCount: number;
+  partCount: number;
+}
+
+export interface PartDto {
+  id?: number;
+  vessel?: Vessel;
+  vesselId?: number;
+  code?: string;
+  name: string;
+  itemCode?: string;
+  itemShortDescription?: string;
+  itemLongDescription?: string;
+  drawNo?: string;
+  drawingPositionNo?: string;
+  maker?: string;
+  manufacturer?: string;
+  partNo?: string;
+  serialNumber?: string;
+  subcomponent?: SubcomponentDto; // Subcomponent object from API
+  subcomponentId?: number; // For linking to subcomponent (legacy/compatibility)
+  location?: string; // Part location field
+}

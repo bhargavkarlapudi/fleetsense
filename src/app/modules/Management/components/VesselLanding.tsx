@@ -278,7 +278,6 @@ const singleVesselMarker: DashVessel = {
 {errorLanding && (
   <div className="bg-danger text-white small px-4 py-2 border-bottom">
     Failed to load
-    {/* : {errorLanding} */}
   </div>
 )}
 

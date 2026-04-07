@@ -9,58 +9,59 @@ interface MachineryRow {
 
 interface OuterRow {
     fieldType: string;
-    rob: string;
+    initialRob: string;
+    lastRob: string;
     machineries: MachineryRow[];
 }
 
 const eventType = [
     {
         label: "Select Fuel Type",
-        value: ""
+        value: "Select Fuel Type"
     },
     {
         label: "HFO",
-        value: ""
+        value: "HFO"
     },
     {
         label: "VLSFO",
-        value: ""
+        value: "VLSFO"
     },
     {
         label: "LSFO",
-        value: ""
+        value: "LSFO"
     },
     {
         label: "MGO",
-        value: ""
+        value: "MGO"
     },
     {
         label: "MDO",
-        value: ""
+        value: "MDO"
     },
     {
         label: "ULSFO",
-        value: ""
+        value: "ULSFO"
     },
     {
         label: "LNG",
-        value: ""
+        value: "LNG"
     },
     {
         label: "Methanol",
-        value: ""
+        value: "Methanol"
     },
     {
         label: "BioFuel",
-        value: ""
+        value: "BioFuel"
     },
     {
         label: "LPG",
-        value: ""
+        value: "LPG"
     },
     {
         label: "Hydrogen / Ammonia",
-        value: ""
+        value: "Hydrogen / Ammonia"
     }
 ]
 
@@ -102,14 +103,15 @@ const ConsumptionAndROB: React.FC = () => {
     const [rows, setRows] = useState<OuterRow[]>([
         {
             fieldType: '',
-            rob: '',
+            initialRob: '',
+            lastRob: '',
             machineries: [{ machinery: '', consumed: '', rob: '' }],
         }
     ]);
 
     const handleOuterChange = (
         index: number,
-        field: 'fieldType' | 'rob', // only allow these
+        field: 'fieldType' | 'initialRob' | 'lastRob',
         value: string
     ) => {
         const newRows = [...rows];
@@ -133,7 +135,8 @@ const ConsumptionAndROB: React.FC = () => {
             ...rows,
             {
                 fieldType: '',
-                rob: '',
+                initialRob: '',
+                lastRob: '',
                 machineries: [{ machinery: '', consumed: '', rob: '' }],
             }
         ]);
@@ -152,10 +155,10 @@ const ConsumptionAndROB: React.FC = () => {
         }}>
             {rows.map((row, outerIndex) => (
                 <div key={outerIndex} className="mb-4 border p-3 rounded">
-                    <Row className="mb-2">
-                        <Col md={5}>
+                    <Row className="mb-2 align-items-end">
+                        <Col md={4}>
                             <Form.Group>
-                                <Form.Label style={{ color: '#000',fontWeight:'500',fontSize:15, marginLeft:"5px" }}>Field Type</Form.Label>
+                                <Form.Label style={{ color: '#000', fontWeight: '500', fontSize: 15, marginLeft: "5px" }}>Field Type</Form.Label>
                                 <Form.Select
                                     value={row.fieldType}
                                     onChange={(e) => handleOuterChange(outerIndex, 'fieldType', e.target.value)}
@@ -164,17 +167,31 @@ const ConsumptionAndROB: React.FC = () => {
                                 </Form.Select>
                             </Form.Group>
                         </Col>
-                        <Col md={5}>
+                        <Col md={3}>
                             <Form.Group>
-                                <Form.Label style={{ color: '#000',fontWeight:'500',fontSize:15, marginLeft:"5px" }}>ROB</Form.Label>
+                                <Form.Label style={{ color: '#000', fontWeight: '500', fontSize: 15, marginLeft: "5px" }}>Initial ROB</Form.Label>
                                 <Form.Control
                                     type="number"
-                                    value={row.rob}
-                                    onChange={(e) => handleOuterChange(outerIndex, 'rob', e.target.value)}
+                                    inputMode="decimal"
+                                    step="any"
+                                    value={row.initialRob}
+                                    onChange={(e) => handleOuterChange(outerIndex, 'initialRob', e.target.value)}
                                 />
                             </Form.Group>
                         </Col>
-                        <Col md={2} className="d-flex align-items-end">
+                        <Col md={3}>
+                            <Form.Group>
+                                <Form.Label style={{ color: '#000', fontWeight: '500', fontSize: 15, marginLeft: "5px" }}>Last ROB</Form.Label>
+                                <Form.Control
+                                    type="number"
+                                    inputMode="decimal"
+                                    step="any"
+                                    value={row.lastRob}
+                                    onChange={(e) => handleOuterChange(outerIndex, 'lastRob', e.target.value)}
+                                />
+                            </Form.Group>
+                        </Col>
+                        <Col md={2} className="d-flex align-items-end justify-content-end">
                             <Button variant="primary" onClick={addOuterRow}>+</Button>
                         </Col>
                     </Row>

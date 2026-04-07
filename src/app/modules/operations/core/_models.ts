@@ -280,9 +280,18 @@ export interface VesselOperations {
 // === Cargo Operations ===
 export type CargoBreakupType = 'TANK' | 'HOLD';
 
+export interface CargoFinalAttachment {
+  id?: number;
+  cargoOperationId?: number;
+  documentName: string;
+  remarks?: string | null;
+  attachmentUrl?: string | null;
+}
+
 export interface CargoOperationDetail {
   id?: number;
   cargoOperationId?: number;
+  cargoGrade?: string | null;
   cargoName: string;
   quantityMt?: number | null;
   noOfLoadersOrDischarge?: number | null;
@@ -290,6 +299,8 @@ export interface CargoOperationDetail {
   dockWaterDensity?: number | null;
   maxDraughtAvailableHw?: number | null;
   loadDischargeRateM3PerHr?: number | null;
+  currentDraughtMtrs?: number | null;
+  attachmentUrl?: string | null;
   orderIndex?: number;
 }
 
@@ -303,9 +314,17 @@ export interface CargoOperation {
   voyageNumber?: string | null;
   breakupType: CargoBreakupType;
   remarks?: string | null;
+  cargoName?: string | null;
+  totalCargoQtyMt?: number | null;
+  shipperAsPerBl?: string | null;
+  receiverAsPerBl?: string | null;
+  loadPorts?: string | null;
+  dischargePorts?: string | null;
+  heatingRequirements?: string | null;
   createdDateTime?: string;
   updatedDateTime?: string;
   details: CargoOperationDetail[];
+  finalAttachments?: CargoFinalAttachment[];
 }
 
 export interface CargoOperationRequest {
@@ -314,5 +333,13 @@ export interface CargoOperationRequest {
   voyageId?: number | null;
   breakupType: CargoBreakupType;
   remarks?: string | null;
+    cargoName?: string | null;
+  totalCargoQtyMt?: number | null;
+  shipperAsPerBl?: string | null;
+  receiverAsPerBl?: string | null;
+  loadPorts?: string | null;
+  dischargePorts?: string | null;
+  heatingRequirements?: string | null;
   details: CargoOperationDetail[];
+  finalAttachments?: CargoFinalAttachment[];
 }

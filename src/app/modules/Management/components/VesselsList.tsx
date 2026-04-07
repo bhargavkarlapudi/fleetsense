@@ -187,7 +187,6 @@ const canManageVessels =
         const workbook = XLSX.utils.table_to_book(table, { sheet: "Vessels" });
         XLSX.writeFile(workbook, "vessels.xlsx");
     };
-
     
     const landingVessel = landingVesselId !== null
         ? vessels.find(v => v.id === landingVesselId) || null
@@ -277,7 +276,7 @@ const canManageVessels =
                                                 {currentVessels.length > 0 ? (
                                                     currentVessels.map((vessel, idx) => (
                                                         <tr key={idx}>
-                                                             <td>
+                                                            <td>
                                                             {vessel.fleet_name ? (
                                                                 <a
                                                                     href="#"
@@ -587,7 +586,7 @@ const canManageVessels =
                         vesselData={selectedVessel}
                     />
                 )}
-
+                
                 {landingVessel && (
                     <VesselLandingModal
                         isOpen={!!landingVessel}

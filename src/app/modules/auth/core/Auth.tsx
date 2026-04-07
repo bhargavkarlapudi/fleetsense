@@ -68,7 +68,6 @@ export const AuthProvider: FC<WithChildren> = ({ children }) => {
   authHelper.removeAuth();
   sessionStorage.clear(); // clear sessionStorage on logout
 }
-
   }
 
   const logout = async () => {
@@ -132,7 +131,6 @@ export const AuthProvider: FC<WithChildren> = ({ children }) => {
       return undefined; // 1 SUPER_ADMIN
   }
 }
- 
 
   return (
     <AuthContext.Provider value={{ auth, saveAuth, currentUser, setCurrentUser, logout }}>

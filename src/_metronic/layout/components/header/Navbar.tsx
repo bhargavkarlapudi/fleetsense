@@ -13,14 +13,14 @@ const btnIconClass = 'svg-icon-1'
 
 const Navbar = () => {
   const { currentUser } = useAuth()
-  const roleId = currentUser?.role?.id;
   const roleEntityName = currentUser?.roleEntityName;
   const { config } = useLayout()
+     const roleId = currentUser?.role?.id;
   const roleName = currentUser?.roleEntityName;
   const vesselname = currentUser?.vessel?.fleet_name;
   const rank = currentUser?.rank?.rank;
   const imoNumber = currentUser?.vessel?.imoNumber;
-  // ADD: Resolve company/group label for operator banner.
+    // ADD: Resolve company/group label for operator banner.
 // Tries a few common shapes; falls back to "Superadmin" when no CGA is present.
 const companyGroupName =
   (currentUser as any)?.companyGroupAdmin?.name ??
@@ -85,7 +85,6 @@ const operatorBanner = roleId === 6
   {/* Operator (role 6): show "{company / Superadmin}'s operator" */}
   {roleId === 6 && <b>{operatorBanner}</b>}
 </span>
-
           <img src={toAbsoluteUrl('/media/avatars/blank.png')} alt='' />
           <span className='ps-2' style={{ fontWeight: 500 }}>
             {roleEntityName}

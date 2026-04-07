@@ -328,7 +328,7 @@ const AddCrewModal: React.FC<Props> = ({ onClose, isOpen, onCrewAdded }) => {
     const validDateOfBirth = dateOfBirth ? dateOfBirth : new Date() // Fallback to current date if null
 
     try {
-      const loginLink = `https://uat.elecmeksolutions.com/auth/${selectedVessel?.vesselType}/${selectedVessel?.imoNumber}/ship-login`
+      const loginLink = `https://elecmeksolutions.com/auth/${selectedVessel?.vesselType}/${selectedVessel?.imoNumber}/ship-login`
       const password = generatePassword()
       const userName = generateUsername(name);
 

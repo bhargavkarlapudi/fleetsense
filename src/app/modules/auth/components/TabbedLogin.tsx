@@ -193,7 +193,7 @@ useEffect(() => {
       <div className="row justify-content-end min-vh-100 align-items-center p-4">
         <div className="col-xl-8 col-lg-7 col-md-6"></div>
         <div className="col-xl-3 col-lg-4 col-md-5">
-          <h3 className="mb-5 text-white fw-bolder" style={{ fontSize: '3.2rem' }}>ShipsEdge<sup>AI</sup></h3>
+          <h3 className="mb-5 text-white fw-bolder" style={{ fontSize: '3.2rem' }}>Elecmeksolutions<sup></sup></h3>
           <ul className="nav nav-tabs nav-fill" role="tablist">
             <li className="nav-item">
               <button

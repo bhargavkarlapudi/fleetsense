@@ -5,7 +5,7 @@ import React from 'react'
 import {
   getCrewList,
   getRestHourEntriesInRange,
-  getRestHoursSummary,
+  getRollingMatrixSummaries,
   getVesselList,
   saveRestHourEntries,
   deleteWorkingSlots,
@@ -55,6 +55,42 @@ const flattenViolations = (crewList: any[], dateKeys: string[], hoursMap: Record
   return rows
 }
 
+// Legacy rolling tooltip helpers (kept for reference).
+// const rollingWindowLabels: Record<string, string> = {
+//   ROLLING_24H: 'Rolling 24h',
+//   ROLLING_72H: 'Rolling 72h',
+//   ROLLING_7D: 'Rolling 7d',
+// }
+//
+// const formatRollingDateTime = (value?: string | null) => {
+//   if (!value) return ''
+//   const date = new Date(value)
+//   if (Number.isNaN(date.getTime())) return String(value)
+//   return date.toLocaleString('en-GB', {
+//     day: '2-digit',
+//     month: 'short',
+//     year: 'numeric',
+//     hour: '2-digit',
+//     minute: '2-digit',
+//   })
+// }
+//
+// const buildRollingTooltip = (data: RollingExceptionResponse, asOf?: string | null) => {
+//   const header = asOf ? `Rolling as of ${formatRollingDateTime(asOf)}` : 'Rolling exceptions'
+//   const lines = (data.windows ?? []).map((rollingWindow) => {
+//     const label = rollingWindowLabels[rollingWindow.code] ?? rollingWindow.code
+//     const range = `${formatRollingDateTime(rollingWindow.windowStart)} -> ${formatRollingDateTime(
+//       rollingWindow.windowEnd
+//     )}`
+//     const status = rollingWindow.violated ? 'VIOLATION' : 'OK'
+//     const base = `${label}: ${status} (${range})`
+//     if (rollingWindow.exceptions && rollingWindow.exceptions.length) {
+//       return `${base}\n${rollingWindow.exceptions.join('; ')}`
+//     }
+//     return base
+//   })
+//   return [header, ...lines].join('\n')
+// }
 
   // --- Rank sorting helpers (share same spec as SignPage) ---
 const RANK_ORDER = [
@@ -120,7 +156,8 @@ const compareRank = (a?: string, b?: string, dir: 'asc' | 'desc' = 'asc'): numbe
 };
 
 // === CONFIG ===
-const UPDATE_EDITABLE_LOOKBACK_DAYS = 7; // change this if you ever want 14, etc.
+const ROLLING_WINDOW_DAYS = 7;
+const UPDATE_EDITABLE_LOOKBACK_DAYS = ROLLING_WINDOW_DAYS + 1; // +1 day to cover rolling window across midnight
 
 // returns {fromISO, toISO} for last N days ending today (UTC)
 const getLastNDaysRange = (n: number) => {
@@ -157,6 +194,101 @@ const getDatesInRange = (startDate: string, endDate: string): Date[] => {
   return dates
 }
 
+type ViolationSet = {
+  minRest24h: {value: number; isViolation: boolean}
+  minRest7d: {value: number; isViolation: boolean}
+  maxInterval: {value: number; isViolation: boolean}
+  maxPeriods: {value: number; isViolation: boolean}
+  minSingleRest: {value: number; isViolation: boolean}
+}
+
+type MLCViolationSet = {
+  maxWork24h: {value: number; isViolation: boolean}
+  maxWork7d: {value: number; isViolation: boolean}
+  minRest7d?: {value: number; isViolation: boolean}
+}
+
+/**
+ * workSlots: 48 booleans (true = WORK, false = REST) for the day, 30-min granularity
+ */
+const checkRestViolations = (workSlots: boolean[]): ViolationSet => {
+  const SLOT_HRS = 0.5
+
+  // --- totals ---
+  const totalWorkSlots = workSlots.filter(Boolean).length
+  const totalRestHrs = 24 - totalWorkSlots * SLOT_HRS
+
+  // --- max continuous WORK (to enforce "interval between two rest periods <= 14h") ---
+  let maxContinuousWork = 0
+  let curWork = 0
+  for (const w of workSlots) {
+    if (w) {
+      curWork++
+    } else {
+      if (curWork > maxContinuousWork) maxContinuousWork = curWork
+      curWork = 0
+    }
+  }
+  if (curWork > maxContinuousWork) maxContinuousWork = curWork
+  const maxIntervalBetweenRests = maxContinuousWork * SLOT_HRS
+
+  // --- build contiguous REST blocks (in hours) ---
+  const restBlocksHrs: number[] = []
+  let curRest = 0
+  for (const w of workSlots) {
+    if (!w) {
+      curRest++
+    } else if (curRest > 0) {
+      restBlocksHrs.push(curRest * SLOT_HRS)
+      curRest = 0
+    }
+  }
+  if (curRest > 0) restBlocksHrs.push(curRest * SLOT_HRS)
+
+  const longestSingleRestHrs = restBlocksHrs.length ? Math.max(...restBlocksHrs) : 0
+
+  // --- Max Divisions rule (relaxed as requested) ---
+  // If the day already satisfies: (total rest >= 10h) AND (one block >= 6h),
+  // then DO NOT hit the "More than 2 rest periods/day" violation regardless of splits.
+  const suppressMaxDivisions = totalRestHrs >= 10 && longestSingleRestHrs >= 6
+
+  // Can the required 10h be covered by <= 2 rest periods?
+  const sorted = [...restBlocksHrs].sort((a, b) => b - a)
+  const top1 = sorted[0] ?? 0
+  const top2 = sorted[1] ?? 0
+  const covers10WithTwo = top1 >= 10 || top1 + top2 >= 10
+
+  const maxDivisionsViolation = suppressMaxDivisions ? false : totalRestHrs >= 10 && !covers10WithTwo
+
+  return {
+    minRest24h: {value: 10, isViolation: totalRestHrs < 10},
+    minRest7d: {value: 77, isViolation: false},
+    maxInterval: {value: 14, isViolation: maxIntervalBetweenRests > 14},
+    maxPeriods: {value: 2, isViolation: maxDivisionsViolation},
+    minSingleRest: {value: 6, isViolation: longestSingleRestHrs < 6},
+  }
+}
+
+// Compute MLC daily/weekly breaches (72h in 7d; 14h/day)
+// When exceptions ON, also compute minRest7d >= 70h
+const checkMLCViolations = (
+  workSlots: boolean[],
+  sevenDayWorkTotal: number,
+  sevenDayRestTotal: number,
+  allowExceptions: boolean
+): MLCViolationSet => {
+  const SLOT_HRS = 0.5
+  const dailyWork = workSlots.filter(Boolean).length * SLOT_HRS
+  const v: MLCViolationSet = {
+    maxWork24h: {value: 14, isViolation: dailyWork > 14},
+    maxWork7d: {value: 72, isViolation: sevenDayWorkTotal > 72},
+  }
+  if (allowExceptions) {
+    v.minRest7d = {value: 70, isViolation: sevenDayRestTotal < 70}
+  }
+  return v
+}
+
 type CompanyGroupOpt = {id: number; name: string}
 type SubcompanyOpt = {id: number; name: string; companyGroupId?: number}
 type VesselOpt = {id: number; name: string}
@@ -188,6 +320,7 @@ interface UpdateTabProps {
         compliant: boolean
         violationCount: number
         violations: string[]
+        violationCodes?: string[]
       }
     >
   ) => void
@@ -248,7 +381,7 @@ const UpdateTab: FC<UpdateTabProps> = ({
   const crewId = currentUser?.roleEntityId
   const roleId = currentUser?.role?.id
   const rankId = currentUser?.rank?.id
-    // Operator flavors:
+  // Operator flavors:
 // - No companyGroupAdminId => acts like Superadmin
 // - Has companyGroupAdminId => acts like Company Group Admin
 const isOperator = roleId === 6
@@ -303,12 +436,124 @@ useEffect(() => {
   const getWorkingFlag = (e: any) => Boolean(e?.isWorking ?? e?.working)
 
   // ADD — helper to check if a day is approved/locked
-const isDateLocked = (dateISO: string) => approvedDates?.has(dateISO) === true
+  const isDateLocked = (dateISO: string) => approvedDates?.has(dateISO) === true
 
-// Small utility to warn once per interaction
-const warnLocked = (dateISO: string) => {
-  notify?.warn?.(`This date (${dateISO}) is approved and cannot be edited.`)
-}
+  // Small utility to warn once per interaction
+  const warnLocked = (dateISO: string) => {
+    notify?.warn?.(`This date (${dateISO}) is approved and cannot be edited.`)
+  }
+
+  const toDateKey = (value: Date) => {
+    const yyyy = value.getFullYear()
+    const mm = String(value.getMonth() + 1).padStart(2, '0')
+    const dd = String(value.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  const floorToHalfHourLocal = (value: Date) => {
+    const next = new Date(value.getTime())
+    const minutes = next.getMinutes()
+    next.setMinutes(minutes < 30 ? 0 : 30, 0, 0)
+    return next
+  }
+
+  const formatRollingTime = (value: Date) =>
+    value.toLocaleTimeString('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+
+  const formatRollingDateTime = (value: Date) =>
+    value.toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+
+  const [rollingAnchorLocal, setRollingAnchorLocal] = React.useState<Date>(() =>
+    floorToHalfHourLocal(new Date())
+  )
+
+  const parseLocalDate = (dateKey: string) => {
+    const [yyyy, mm, dd] = dateKey.split('-').map(Number)
+    return new Date(yyyy, (mm ?? 1) - 1, dd ?? 1)
+  }
+
+  useEffect(() => {
+    if (activeTab !== 'update') return
+
+    const tick = () => setRollingAnchorLocal(floorToHalfHourLocal(new Date()))
+    tick()
+
+    const now = new Date()
+    const minutes = now.getMinutes()
+    const seconds = now.getSeconds()
+    const millis = now.getMilliseconds()
+    const nextHalf = minutes < 30 ? 30 : 60
+    const msToNext =
+      ((nextHalf - minutes) * 60 - seconds) * 1000 - millis
+
+    let intervalId: number | null = null
+    const timeoutId = window.setTimeout(() => {
+      tick()
+      intervalId = window.setInterval(tick, 30 * 60 * 1000)
+    }, Math.max(msToNext, 0))
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      if (intervalId !== null) window.clearInterval(intervalId)
+    }
+  }, [activeTab])
+
+  const rollingWindow = useMemo(() => {
+    const end = rollingAnchorLocal
+    const start = new Date(end.getTime() - ROLLING_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+    const slots: Array<{start: Date; dateKey: string; slotIndex: number}> = []
+    const totalSlots = ROLLING_WINDOW_DAYS * 48
+    for (let i = 0; i < totalSlots; i++) {
+      const slotStart = new Date(start.getTime() + i * 30 * 60 * 1000)
+      const dateKey = toDateKey(slotStart)
+      const slotIndex =
+        slotStart.getHours() * 2 + (slotStart.getMinutes() >= 30 ? 1 : 0)
+      slots.push({start: slotStart, dateKey, slotIndex})
+    }
+    return {start, end, slots}
+  }, [rollingAnchorLocal, toDateKey])
+
+  const rollingDayWindows = useMemo(() => {
+    const windows: Array<{
+      start: Date
+      end: Date
+      endKey: string
+      slots: Array<{start: Date; dateKey: string; slotIndex: number}>
+    }> = []
+    const base = rollingWindow.start
+    for (let d = 0; d < ROLLING_WINDOW_DAYS; d++) {
+      const dayStart = new Date(base.getTime() + d * 24 * 60 * 60 * 1000)
+      const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+      const slots: Array<{start: Date; dateKey: string; slotIndex: number}> = []
+      for (let i = 0; i < 48; i++) {
+        const slotStart = new Date(dayStart.getTime() + i * 30 * 60 * 1000)
+        const dateKey = toDateKey(slotStart)
+        const slotIndex =
+          slotStart.getHours() * 2 + (slotStart.getMinutes() >= 30 ? 1 : 0)
+        slots.push({start: slotStart, dateKey, slotIndex})
+      }
+      windows.push({start: dayStart, end: dayEnd, endKey: toDateKey(dayEnd), slots})
+    }
+    return windows
+  }, [rollingWindow, toDateKey])
+
+  const rollingHeaderSlots = useMemo(() => {
+    if (rollingDayWindows.length) return rollingDayWindows[0].slots
+    return rollingWindow.slots.slice(0, 48)
+  }, [rollingDayWindows, rollingWindow])
+
+  const useRollingWindow = true
 
   // Fetch when dates change
   useEffect(() => {
@@ -582,7 +827,13 @@ if (!hasHourAdds && !hasHourDeletes && !hasRemarkOnly) {
 
     if (datesTouched.size && onLocalSummaryChange) {
       const patch: Record<string, {
-        work: number; rest: number; compliant: boolean; violationCount: number; violations: string[]; remarks?: string
+        work: number
+        rest: number
+        compliant: boolean
+        violationCount: number
+        violations: string[]
+        violationCodes?: string[]
+        remarks?: string
       }> = {}
       datesTouched.forEach((d) => {
         patch[d] = { ...buildDaySummary(d), remarks: remarksByDate[d] ?? (remarks.get(d) || '') }
@@ -590,8 +841,7 @@ if (!hasHourAdds && !hasHourDeletes && !hasRemarkOnly) {
       onLocalSummaryChange(crewID, patch)
     }
 
-    // 4) Reload server summa
-    // ries (incl. approval flags)
+    // 4) Reload server summaries (incl. approval flags)
     await onAfterSave?.()
 
     // 5) Clear local diffs
@@ -632,102 +882,6 @@ if (!hasHourAdds && !hasHourDeletes && !hasRemarkOnly) {
     console.log(filteredCrewMembers)
   }, [filteredCrewMembers])
 
-  type ViolationSet = {
-    minRest24h: {value: number; isViolation: boolean}
-    minRest7d: {value: number; isViolation: boolean} // will be overridden per row
-    maxInterval: {value: number; isViolation: boolean}
-    maxPeriods: {value: number; isViolation: boolean}
-    minSingleRest: {value: number; isViolation: boolean}
-  }
-
-  /**
- * workSlots: 48 booleans (true = WORK, false = REST) for the day, 30-min granularity
- */
-const checkRestViolations = (workSlots: boolean[]): ViolationSet => {
-  const SLOT_HRS = 0.5
-
-  // --- totals ---
-  const totalWorkSlots = workSlots.filter(Boolean).length
-  const totalRestHrs = 24 - totalWorkSlots * SLOT_HRS
-
-  // --- max continuous WORK (to enforce "interval between two rest periods <= 14h") ---
-  let maxContinuousWork = 0
-  let curWork = 0
-  for (const w of workSlots) {
-    if (w) {
-      curWork++
-    } else {
-      if (curWork > maxContinuousWork) maxContinuousWork = curWork
-      curWork = 0
-    }
-  }
-  if (curWork > maxContinuousWork) maxContinuousWork = curWork
-  const maxIntervalBetweenRests = maxContinuousWork * SLOT_HRS
-
-  // --- build contiguous REST blocks (in hours) ---
-  const restBlocksHrs: number[] = []
-  let curRest = 0
-  for (const w of workSlots) {
-    if (!w) {
-      curRest++
-    } else if (curRest > 0) {
-      restBlocksHrs.push(curRest * SLOT_HRS)
-      curRest = 0
-    }
-  }
-  if (curRest > 0) restBlocksHrs.push(curRest * SLOT_HRS)
-
-  const longestSingleRestHrs = restBlocksHrs.length ? Math.max(...restBlocksHrs) : 0
-
-  // --- Max Divisions rule (relaxed as requested) ---
-  // If the day already satisfies: (total rest ≥ 10h) AND (one block ≥ 6h),
-  // then DO NOT hit the "More than 2 rest periods/day" violation — regardless of splits.
-  const suppressMaxDivisions =
-    totalRestHrs >= 10 && longestSingleRestHrs >= 6
-  
-  // --- NEW “Max Divisions” logic (STCW) ---
-  // Can the *required* 10h be covered by <= 2 rest periods?
-  const sorted = [...restBlocksHrs].sort((a, b) => b - a)
-  const top1 = sorted[0] ?? 0
-  const top2 = sorted[1] ?? 0
-  const covers10WithTwo = top1 >= 10 || (top1 + top2) >= 10
-
-  // Violate “max divisions” only when the day has 10h+ rest but it *requires* 3+ periods to reach it
-  // const maxDivisionsViolation = totalRestHrs >= 10 && !covers10WithTwo
-  const maxDivisionsViolation = suppressMaxDivisions
-    ? false
-    : (totalRestHrs >= 10 && !covers10WithTwo)
-
-  return {
-    minRest24h: {value: 10, isViolation: totalRestHrs < 10},
-    minRest7d:  {value: 77, isViolation: false}, // set per row elsewhere
-    maxInterval:{value: 14, isViolation: maxIntervalBetweenRests > 14},
-    maxPeriods: {value: 2,  isViolation: maxDivisionsViolation}, // <-- changed
-    // keep existing 6h rule (one rest period >= 6h)
-    minSingleRest: {value: 6, isViolation: longestSingleRestHrs < 6},
-  }
-}
-
-type MLCViolationSet = {
-  maxWork24h: { value: number; isViolation: boolean }
-  maxWork7d:  { value: number; isViolation: boolean }
-  minRest7d?: { value: number; isViolation: boolean } // only used when exceptions ON (≥70h)
-}
-
-// Compute MLC daily/weekly breaches (72h in 7d; 14h/day)
-// When exceptions ON, also compute minRest7d ≥ 70h
-const checkMLCViolations = (workSlots: boolean[], sevenDayWorkTotal: number, sevenDayRestTotal: number): MLCViolationSet => {
-  const SLOT_HRS = 0.5
-  const dailyWork = workSlots.filter(Boolean).length * SLOT_HRS
-  const v: MLCViolationSet = {
-    maxWork24h: { value: 14, isViolation: dailyWork > 14 },
-    maxWork7d:  { value: 72, isViolation: sevenDayWorkTotal > 72 },
-  }
-  if (allowExceptions) {
-    v.minRest7d = { value: 70, isViolation: sevenDayRestTotal < 70 }
-  }
-  return v
-}
 
 
   // Build Matrix-Overview-compatible summary for a given date string (YYYY-MM-DD)
@@ -785,7 +939,7 @@ const checkMLCViolations = (workSlots: boolean[], sevenDayWorkTotal: number, sev
     const wkWork = endW?.totalWork ?? 0
     const wkRest = end?.totalRest ?? 168 - wkWork
 
-    const v = checkMLCViolations(slots, wkWork, wkRest)
+    const v = checkMLCViolations(slots, wkWork, wkRest, allowExceptions)
 
     if (work > 14) violations.push('Max Work/24h > 14h')
     if (end && endW && wkWork > 72) violations.push('Max Work/7d > 72h')
@@ -800,12 +954,42 @@ const checkMLCViolations = (workSlots: boolean[], sevenDayWorkTotal: number, sev
     violations,
   }
 }
-  const isWorkingSlot = (dateStr: string, timeIndex: number): boolean => {
+const isWorkingSlot = (dateStr: string, timeIndex: number): boolean => {
   if (pendingDeletes.some((e) => e.date === dateStr && e.slotIndex === timeIndex)) return false
   if (selectedEntries.some((e) => e.date === dateStr && e.slotIndex === timeIndex)) return true
   const apiItem = apiEntries.find((e) => e.entryDate === dateStr && e.slotIndex === timeIndex)
   return apiItem ? getWorkingFlag(apiItem) : false
 }
+
+const rollingTotals7d = useMemo(() => {
+  const workSlots = rollingWindow.slots.reduce((acc, slot) => {
+    return acc + (isWorkingSlot(slot.dateKey, slot.slotIndex) ? 1 : 0)
+  }, 0)
+  const totalWork = workSlots * 0.5
+  return {
+    totalWork,
+    totalRest: ROLLING_WINDOW_DAYS * 24 - totalWork,
+  }
+}, [rollingWindow, apiEntries, selectedEntries, pendingDeletes])
+
+const rollingExceptionEndKeys = useMemo(() => {
+  const s = new Set<string>()
+  if (regulation !== 'stcw' || !allowExceptions) return s
+
+  const candidates = rollingDayWindows
+    .map((day) => {
+      const workSlots = day.slots.map((slot) => isWorkingSlot(slot.dateKey, slot.slotIndex))
+      const rest = 24 - workSlots.filter(Boolean).length * 0.5
+      return {endKey: day.endKey, rest, startMs: day.start.getTime()}
+    })
+    .filter((c) => c.rest >= 6 && c.rest < 10)
+    .sort((a, b) => a.startMs - b.startMs)
+
+  for (let i = 0; i < Math.min(2, candidates.length); i++) {
+    s.add(candidates[i].endKey)
+  }
+  return s
+}, [rollingDayWindows, regulation, allowExceptions, apiEntries, selectedEntries, pendingDeletes])
 
 const applyCell = (dateStr: string, timeIndex: number, toWork: boolean) => {
   if (isDateLocked(dateStr)) return
@@ -933,412 +1117,809 @@ const clearUnsavedChanges = () => {
                   style={{minWidth: '3200px'}}
                 >
                   <thead className='table-header'>
-                    {/* --- FIRST HEADER ROW --- */}
-                    <tr>
-                      <th
-                        rowSpan={2}
-                        className='text-center align-middle'
-                        style={{
-                          position: 'sticky',
-                          left: 0,
-                          zIndex: 11,
-                          backgroundColor: '#f8f9fa',
-                          minWidth: '120px',
-                        }}
-                      >
-                        Date
-                      </th>
-
-                      {/* MODIFICATION 1: Removed the 'borderLeft' style from this row.
-                          The main hour separator is now defined in the second header row below.
-                      */}
-                      {Array.from({length: 24}, (_, i) => (
-                        <th
-                          key={i}
-                          colSpan={2}
-                          className='text-center'
-                          style={{
-                            minWidth: '60px',
-                            backgroundColor: '#f8f9fa',
-                            borderLeft: i > 0 ? '1px solid #dee2e6' : 'inherit',
-                          }}
-                        >
-                          {i.toString().padStart(2, '0')}:00
-                        </th>
-                      ))}
-
-                      <th
-                        rowSpan={2}
-                        className='text-center align-middle'
-                        style={{minWidth: '100px'}}
-                      >
-                        Total Working Hrs
-                      </th>
-                      <th
-                        rowSpan={2}
-                        className='text-center align-middle'
-                        style={{minWidth: '100px'}}
-                      >
-                        Total Rest Hrs
-                      </th>
-                      <th
-                        rowSpan={2}
-                        className='text-center align-middle'
-                        style={{minWidth: '150px'}}
-                      >
-                        Remarks
-                      </th>
-                      <th colSpan={5} className='text-center align-middle'>
-                        Rest Regulations
-                      </th>
-                    </tr>
-
-                    {/* --- SECOND HEADER ROW --- */}
-                    <tr>
-                      {Array.from({length: 24}, (_, i) => (
-                        <React.Fragment key={i}>
-                          {/* The border has been removed from this '00' column */}
+                    {useRollingWindow ? (
+                      <>
+                        <tr>
                           <th
-                            className='text-center align-middle fw-normal'
-                            style={{
-                              minWidth: '30px',
-                              backgroundColor: '#f8f9fa',
-                              fontSize: '12px',
-                              padding: '4px',
-                            }}
-                          >
-                            00
-                          </th>
-
-                          {/* MODIFICATION 2: Moved the border to the right of the '30' column.
-                              The condition `i < 23` ensures the border doesn't appear at the very end of the table.
-                          */}
-                          <th
-                            className='text-center align-middle fw-normal'
-                            style={{
-                              minWidth: '30px',
-                              backgroundColor: '#f8f9fa',
-                              fontSize: '12px',
-                              padding: '4px',
-                              borderRight: i < 23 ? '1px solid #dee2e6' : 'none',
-                            }}
-                          >
-                            30
-                          </th>
-                        </React.Fragment>
-                      ))}
-
-                      {/* <th
-                        className='text-center align-middle fw-normal'
-                        style={{minWidth: '120px', fontSize: '12px'}}
-                      >
-                        Min Rest/24h
-                      </th>
-                      <th
-                        className='text-center align-middle fw-normal'
-                        style={{minWidth: '120px', fontSize: '12px'}}
-                      >
-                        Min Rest/7d
-                      </th>
-                      <th
-                        className='text-center align-middle fw-normal'
-                        style={{minWidth: '120px', fontSize: '12px'}}
-                      >
-                        Max Interval
-                      </th>
-                      <th
-                        className='text-center align-middle fw-normal'
-                        style={{minWidth: '120px', fontSize: '12px'}}
-                      >
-                        Max Divisions
-                      </th>
-                      <th
-                        className='text-center align-middle fw-normal'
-                        style={{minWidth: '120px', fontSize: '12px'}}
-                      >
-                        Min Single Rest
-                      </th> */}
-                      {/* --- SECOND HEADER ROW (replace the 5 fixed headers) --- */}
-{regulation === 'stcw' ? (
-  <>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>Min Rest/24h</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>Min Rest/7d</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>Max Interval</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>Max Divisions</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>Min Single Rest</th>
-  </>
-) : (
-  <>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 140, fontSize: 12}}>Max Work/24h</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 140, fontSize: 12}}>Max Work/7d</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 140, fontSize: 12}}>
-      {allowExceptions ? 'Min Rest/7d (≥70h)' : '—'}
-    </th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>—</th>
-    <th className='text-center align-middle fw-normal' style={{minWidth: 120, fontSize: 12}}>—</th>
-  </>
-)}
-                    </tr>
-                  </thead>
-                  <tbody className='table-body'>
-                    {dateRange.map((date) => {
-                      // // ... (your existing logic for calculations remains the same)
-                      // const selectedMember = filteredCrewMembers[0]
-                      // const dailyWorkSlotsBools = timeSlots.map((_, timeIndex) =>
-                      //   isWorkingHour(crewId || 0, date, timeIndex)
-                      // )
-                      // const totalWorkingHrs = dailyWorkSlotsBools.filter(Boolean).length * 0.5
-                      // const totalRestHrs = 24 - totalWorkingHrs
-                      // const violations = checkRestViolations(dailyWorkSlotsBools)
-                      // const dateStr = date.toISOString().split('T')[0]
-                      // const is7dWindowEnd = !!anchored7d[dateStr]
-                      // const violated7d = anchored7d[dateStr]?.violated ?? false
-                      // violations.minRest7d.isViolation = is7dWindowEnd && violated7d
-                      // const violationCellStyle = {backgroundColor: '#ff0000', color: '#ffffff'}
-                      // const isAnyViolation = Object.values(violations).some((v) => v.isViolation)
-                      const dateStr = date.toISOString().split('T')[0]
-const dailyWorkSlotsBools = timeSlots.map((_, i) => isWorkingHour(crewId || 0, date, i))
-
-const totalWorkingHrs = dailyWorkSlotsBools.filter(Boolean).length * 0.5
-const totalRestHrs = 24 - totalWorkingHrs
-
-// style & helpers
-const violationCellStyle = {backgroundColor: '#ff0000', color: '#ffffff'}
-
-// STCW branch (pattern-oriented, with optional daily 6h reductions up to 2 days/7d)
-let stcwV: ViolationSet | null = null
-let is7dWindowEnd = false
-let violated7d = false
-let stcwDailyWaived = false
-
-// MLC branch
-let mlcV: MLCViolationSet | null = null
-
-if (regulation === 'stcw') {
-  stcwV = checkRestViolations(dailyWorkSlotsBools)
-
-  // weekly min rest 77h only at the end of the anchored 7d in Update window (your existing behavior)
-  is7dWindowEnd = !!anchored7d[dateStr]
-  violated7d = anchored7d[dateStr]?.violated ?? false
-  if (stcwV) stcwV.minRest7d.isViolation = is7dWindowEnd && violated7d
-
-  // Exceptions: waive the daily 10h breach for up to 2 days (if 6h ≤ rest < 10h)
-  if (allowExceptions && stcwV.minRest24h.isViolation && totalRestHrs >= 6 && stcwExceptionDays.has(dateStr)) {
-    stcwV.minRest24h.isViolation = false
-    stcwDailyWaived = true
-  }
-} else {
-  // MLC: need anchored weekly (rest & work) at anchored end only
-  const weeklyEnd = anchored7d[dateStr] // carry totalRest
-  const weeklyWorkEnd = anchored7dWork[dateStr]
-  const sevenRest = weeklyEnd?.totalRest ?? null
-  const sevenWork = weeklyWorkEnd?.totalWork ?? null
-
-  // Only compute 7d rules at the window end (same UX as your STCW weekly flag)
-  const wkWork = sevenWork ?? 0
-  const wkRest = sevenRest ?? 168 - wkWork   // fallback, should not hit when both maps in sync
-
-  mlcV = checkMLCViolations(dailyWorkSlotsBools, wkWork, wkRest)
-
-  is7dWindowEnd = !!weeklyEnd && !!weeklyWorkEnd
-}
-
-// combine per-day + (when applicable) weekly checks for the date cell highlight
-const isAnyViolation =
-  regulation === 'stcw'
-    ? !!(
-        stcwV &&
-        (stcwV.minRest24h.isViolation ||
-         stcwV.minRest7d.isViolation ||
-         stcwV.maxInterval.isViolation ||
-         stcwV.maxPeriods.isViolation ||
-         stcwV.minSingleRest.isViolation)
-      )
-    : !!(
-        mlcV &&
-        (mlcV.maxWork24h.isViolation ||
-         // weekly rules only evaluated/shown at 7-day window end, matching your UX
-         (is7dWindowEnd && mlcV.maxWork7d.isViolation) ||
-         (allowExceptions && is7dWindowEnd && mlcV.minRest7d?.isViolation))
-      );
-
-                      return (
-                        <tr key={date.toISOString()}>
-                          {/* Date cell */}
-                          <td
-                            className='fw-bold text-nowrap text-center align-middle'
+                            rowSpan={2}
+                            className='text-center align-middle'
                             style={{
                               position: 'sticky',
                               left: 0,
-                              zIndex: 10,
-                              backgroundColor: '#fff',
-                              borderRight: '1px solid #dee2e6',
-                              ...(isAnyViolation && violationCellStyle),
+                              zIndex: 11,
+                              backgroundColor: '#f8f9fa',
+                              minWidth: '160px',
                             }}
                           >
-                            {date.toLocaleDateString('en-GB', {
-                              day: '2-digit',
-                              month: 'short',
-                              year: 'numeric',
-                            })}
-                            {isDateLocked(dateStr) && (
-  <span className='badge badge-sm bg-success ms-2'>Approved</span>
-)}
+                            Rolling Window
+                          </th>
 
-                          </td>
-
-                          {/* Time slot cells */}
-                          {timeSlots.map((timeSlot, timeIndex) => {
-  const isWorking = dailyWorkSlotsBools[timeIndex]
-  const dateStr = date.toISOString().split('T')[0]
-
-  return (
-    <td
-      key={timeIndex}
-      className='text-center align-middle position-relative'
-      style={{
-        minWidth: '30px',
-        padding: '2px',
-        cursor: 'pointer',
-        backgroundColor: isWorking ? '#fff3cd' : '#f8f9fa',
-        borderLeft: timeIndex % 2 === 0 ? '2px solid #dee2e6' : '1px solid #dee2e6',
-        userSelect: 'none',
-      }}
-      /* 1) single click -> delayed toggle (so double click can cancel) */
-      onClick={() => {
-        scheduleSingleToggle(dateStr, timeIndex)
-      }}
-      /* 2) second mouse down (detail===2) starts paint immediately */
-      onMouseDown={(e) => {
-        if (e.detail === 2) {
-          e.preventDefault()
-          cancelPendingSingle()
-          startBrush(dateStr, timeIndex)
-        }
-      }}
-      /* 3) drag horizontally within the same day row to paint */
-      onMouseEnter={() => {
-        continueBrush(dateStr, timeIndex)
-      }}
-      /* optional: avoid native dblclick selection flash */
-      onDoubleClick={(e) => e.preventDefault()}
-    >
-      <div
-        className='d-flex align-items-center justify-content-center fw-bold'
-        style={{
-          height: '20px',
-          backgroundColor: isWorking ? '#ffc107' : '#e9ecef',
-          borderRadius: '2px',
-          border: isWorking ? '1px solid #ffb300' : '1px solid #ced4da',
-          color: isWorking ? '#212529' : '#6c757d',
-          fontSize: '11px',
-        }}
-      >
-        {isWorking ? 'W' : 'R'}
-      </div>
-    </td>
-  )
-})}
-
-
-                          {/* MODIFIED: Enforced text-center and align-middle on all data cells */}
-                          <td className='text-center fw-bold align-middle'>
-                            {totalWorkingHrs.toFixed(1)}
-                          </td>
-                          <td className='text-center fw-bold align-middle'>
-                            {totalRestHrs.toFixed(1)}
-                          </td>
-                          <td className='text-center align-middle' style={{minWidth: '150px'}}>
-                            <input
-                              type='text'
-                              className='form-control form-control-sm text-center'
-                              placeholder='Add remarks (optional)'
-                              value={remarks.get(dateStr) || ''}
-                              onChange={(e) => onRemarksChange(date, e.target.value)}
-                              // I am commenting this line below to let approved dates also remarks update unlike hours
-                              // disabled={isDateLocked(dateStr)}                 // optional: lock like slots
-                              title={isDateLocked(dateStr) ? 'Approved day — remarks locked' : undefined}
-                              style={{
-                                border: '1px solid #dee2e6',
-                                borderRadius: '4px',
-                                padding: '4px 8px',
-                                fontSize: '12px',
-                                backgroundColor: isDateLocked(dateStr) ? '#f3f3f3' : '#fff',
-                              }}
-                            />
-
-                          </td>
-                          {/* <td
-                            className='text-center align-middle'
-                            style={violations.minRest24h.isViolation ? violationCellStyle : {}}
+                          <th
+                            colSpan={48}
+                            className='text-center'
+                            style={{
+                              minWidth: '60px',
+                              backgroundColor: '#f8f9fa',
+                              borderLeft: '1px solid #dee2e6',
+                            }}
                           >
-                            {violations.minRest24h.value} Hrs
-                          </td>
-                          <td
-                            className='text-center align-middle'
-                            style={violations.minRest7d.isViolation ? violationCellStyle : {}}
-                          >
-                            {violations.minRest7d.value} Hrs
-                          </td>
-                          <td
-                            className='text-center align-middle'
-                            style={violations.maxInterval.isViolation ? violationCellStyle : {}}
-                          >
-                            {violations.maxInterval.value} Hrs
-                          </td>
-                          <td
-                            className='text-center align-middle'
-                            style={violations.maxPeriods.isViolation ? violationCellStyle : {}}
-                          >
-                            {violations.maxPeriods.value}
-                          </td>
-                          <td
-                            className='text-center align-middle'
-                            style={violations.minSingleRest.isViolation ? violationCellStyle : {}}
-                          >
-                            {violations.minSingleRest.value} Hrs
-                          </td> */}
-                          {/* Regulations cells */}
-{regulation === 'stcw' ? (
-  <>
-    <td className='text-center align-middle' style={stcwV!.minRest24h.isViolation ? violationCellStyle : {}}>
-      {stcwV!.minRest24h.value} Hrs
-      {allowExceptions && stcwDailyWaived && (
-        <span className='badge bg-info text-white ms-2'>Exception</span>
-      )}
-    </td>
-    <td className='text-center align-middle' style={stcwV!.minRest7d.isViolation ? violationCellStyle : {}}>
-      {stcwV!.minRest7d.value} Hrs
-    </td>
-    <td className='text-center align-middle' style={stcwV!.maxInterval.isViolation ? violationCellStyle : {}}>
-      {stcwV!.maxInterval.value} Hrs
-    </td>
-    <td className='text-center align-middle' style={stcwV!.maxPeriods.isViolation ? violationCellStyle : {}}>
-      {stcwV!.maxPeriods.value}
-    </td>
-    <td className='text-center align-middle' style={stcwV!.minSingleRest.isViolation ? violationCellStyle : {}}>
-      {stcwV!.minSingleRest.value} Hrs
-    </td>
-  </>
-) : (
-  <>
-    <td className='text-center align-middle' style={mlcV!.maxWork24h.isViolation ? violationCellStyle : {}}>
-      {mlcV!.maxWork24h.value} Hrs
-    </td>
-    <td className='text-center align-middle' style={(is7dWindowEnd && mlcV!.maxWork7d.isViolation) ? violationCellStyle : {}}>
-      {mlcV!.maxWork7d.value} Hrs
-    </td>
-    <td className='text-center align-middle' style={(allowExceptions && is7dWindowEnd && mlcV!.minRest7d?.isViolation) ? violationCellStyle : {}}>
-      {allowExceptions ? `${mlcV!.minRest7d!.value} Hrs` : '—'}
-    </td>
-    <td className='text-center align-middle'>—</td>
-    <td className='text-center align-middle'>—</td>
-  </>
-)}
+                            Time (aligned to rolling anchor)
+                          </th>
 
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '100px'}}
+                          >
+                            Total Working Hrs (24h)
+                          </th>
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '100px'}}
+                          >
+                            Total Rest Hrs (24h)
+                          </th>
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '150px'}}
+                          >
+                            Remarks
+                          </th>
+                          <th colSpan={5} className='text-center align-middle'>
+                            Rest Regulations
+                          </th>
                         </tr>
-                      )
-                    })}
+
+                        <tr>
+                          {rollingHeaderSlots.map((slot) => (
+                            <th
+                              key={`${slot.dateKey}-${slot.slotIndex}`}
+                              className='text-center align-middle fw-normal'
+                              style={{
+                                minWidth: '30px',
+                                backgroundColor: '#f8f9fa',
+                                fontSize: '12px',
+                                padding: '4px',
+                                borderRight:
+                                  slot.start.getMinutes() === 30 ? '1px solid #dee2e6' : 'none',
+                              }}
+                            >
+                              {formatRollingTime(slot.start)}
+                            </th>
+                          ))}
+
+                          {regulation === 'stcw' ? (
+                            <>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Rest/24h
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Rest/7d
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Max Interval
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Max Divisions
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Single Rest
+                              </th>
+                            </>
+                          ) : (
+                            <>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                Max Work/24h
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                Max Work/7d
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                {allowExceptions ? 'Min Rest/7d (>=70h)' : '--'}
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                --
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                --
+                              </th>
+                            </>
+                          )}
+                        </tr>
+                      </>
+                    ) : (
+                      <>
+                        {/* --- FIRST HEADER ROW --- */}
+                        <tr>
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{
+                              position: 'sticky',
+                              left: 0,
+                              zIndex: 11,
+                              backgroundColor: '#f8f9fa',
+                              minWidth: '120px',
+                            }}
+                          >
+                            Date
+                          </th>
+
+                          {/* MODIFICATION 1: Removed the 'borderLeft' style from this row.
+                              The main hour separator is now defined in the second header row below.
+                          */}
+                          {Array.from({length: 24}, (_, i) => (
+                            <th
+                              key={i}
+                              colSpan={2}
+                              className='text-center'
+                              style={{
+                                minWidth: '60px',
+                                backgroundColor: '#f8f9fa',
+                                borderLeft: i > 0 ? '1px solid #dee2e6' : 'inherit',
+                              }}
+                            >
+                              {i.toString().padStart(2, '0')}:00
+                            </th>
+                          ))}
+
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '100px'}}
+                          >
+                            Total Working Hrs
+                          </th>
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '100px'}}
+                          >
+                            Total Rest Hrs
+                          </th>
+                          <th
+                            rowSpan={2}
+                            className='text-center align-middle'
+                            style={{minWidth: '150px'}}
+                          >
+                            Remarks
+                          </th>
+                          <th colSpan={5} className='text-center align-middle'>
+                            Rest Regulations
+                          </th>
+                        </tr>
+
+                        {/* --- SECOND HEADER ROW --- */}
+                        <tr>
+                          {Array.from({length: 24}, (_, i) => (
+                            <React.Fragment key={i}>
+                              {/* The border has been removed from this '00' column */}
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{
+                                  minWidth: '30px',
+                                  backgroundColor: '#f8f9fa',
+                                  fontSize: '12px',
+                                  padding: '4px',
+                                }}
+                              >
+                                00
+                              </th>
+
+                              {/* MODIFICATION 2: Moved the border to the right of the '30' column.
+                                  The condition `i < 23` ensures the border doesn't appear at the very end of the table.
+                              */}
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{
+                                  minWidth: '30px',
+                                  backgroundColor: '#f8f9fa',
+                                  fontSize: '12px',
+                                  padding: '4px',
+                                  borderRight: i < 23 ? '1px solid #dee2e6' : 'none',
+                                }}
+                              >
+                                30
+                              </th>
+                            </React.Fragment>
+                          ))}
+
+                          {/* --- SECOND HEADER ROW (replace the 5 fixed headers) --- */}
+                          {regulation === 'stcw' ? (
+                            <>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Rest/24h
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Rest/7d
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Max Interval
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Max Divisions
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                Min Single Rest
+                              </th>
+                            </>
+                          ) : (
+                            <>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                Max Work/24h
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                Max Work/7d
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 140, fontSize: 12}}
+                              >
+                                {allowExceptions ? 'Min Rest/7d (>=70h)' : '--'}
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                --
+                              </th>
+                              <th
+                                className='text-center align-middle fw-normal'
+                                style={{minWidth: 120, fontSize: 12}}
+                              >
+                                --
+                              </th>
+                            </>
+                          )}
+                        </tr>
+                      </>
+                    )}
+                  </thead>
+                  <tbody className='table-body'>
+                    {useRollingWindow ? (
+                      rollingDayWindows.map((day) => {
+                        const dateStr = day.endKey
+                        const dayWorkSlotsBools = day.slots.map((slot) =>
+                          isWorkingSlot(slot.dateKey, slot.slotIndex)
+                        )
+
+                        const totalWorkingHrs = dayWorkSlotsBools.filter(Boolean).length * 0.5
+                        const totalRestHrs = 24 - totalWorkingHrs
+
+                        const violationCellStyle = {backgroundColor: '#ff0000', color: '#ffffff'}
+
+                        let stcwV: ViolationSet | null = null
+                        let stcwDailyWaived = false
+
+                        let mlcV: MLCViolationSet | null = null
+
+                        if (regulation === 'stcw') {
+                          stcwV = checkRestViolations(dayWorkSlotsBools)
+                          if (stcwV) stcwV.minRest7d.isViolation = rollingTotals7d.totalRest < 77
+
+                          if (
+                            allowExceptions &&
+                            stcwV.minRest24h.isViolation &&
+                            totalRestHrs >= 6 &&
+                            rollingExceptionEndKeys.has(dateStr)
+                          ) {
+                            stcwV.minRest24h.isViolation = false
+                            stcwDailyWaived = true
+                          }
+                        } else {
+                          mlcV = checkMLCViolations(
+                            dayWorkSlotsBools,
+                            rollingTotals7d.totalWork,
+                            rollingTotals7d.totalRest,
+                            allowExceptions
+                          )
+                        }
+
+                        const isAnyViolation =
+                          regulation === 'stcw'
+                            ? !!(
+                                stcwV &&
+                                (stcwV.minRest24h.isViolation ||
+                                  stcwV.minRest7d.isViolation ||
+                                  stcwV.maxInterval.isViolation ||
+                                  stcwV.maxPeriods.isViolation ||
+                                  stcwV.minSingleRest.isViolation)
+                              )
+                            : !!(
+                                mlcV &&
+                                (mlcV.maxWork24h.isViolation ||
+                                  mlcV.maxWork7d.isViolation ||
+                                  (allowExceptions && mlcV.minRest7d?.isViolation))
+                              )
+
+                        const remarksDate = parseLocalDate(dateStr)
+
+                        return (
+                          <tr key={dateStr}>
+                            <td
+                              className='fw-bold text-nowrap text-center align-middle'
+                              style={{
+                                position: 'sticky',
+                                left: 0,
+                                zIndex: 10,
+                                backgroundColor: '#fff',
+                                borderRight: '1px solid #dee2e6',
+                                ...(isAnyViolation && violationCellStyle),
+                              }}
+                            >
+                              <div>Rolling 24h</div>
+                              <div className='text-muted fs-7'>
+                                {formatRollingDateTime(day.start)}{" -> "}{formatRollingDateTime(day.end)}
+                              </div>
+                              {isDateLocked(dateStr) && (
+                                <span className='badge badge-sm bg-success ms-2'>Approved</span>
+                              )}
+                            </td>
+
+                            {day.slots.map((slot, slotIndex) => {
+                              const isWorking = dayWorkSlotsBools[slotIndex]
+                              const slotDateStr = slot.dateKey
+
+                              return (
+                                <td
+                                  key={`${slot.dateKey}-${slot.slotIndex}`}
+                                  className='text-center align-middle position-relative'
+                                  style={{
+                                    minWidth: '30px',
+                                    padding: '2px',
+                                    cursor: 'pointer',
+                                    backgroundColor: isWorking ? '#fff3cd' : '#f8f9fa',
+                                    borderLeft:
+                                      slot.start.getMinutes() === 0
+                                        ? '2px solid #dee2e6'
+                                        : '1px solid #dee2e6',
+                                    userSelect: 'none',
+                                  }}
+                                  onClick={() => {
+                                    scheduleSingleToggle(slotDateStr, slot.slotIndex)
+                                  }}
+                                  onMouseDown={(e) => {
+                                    if (e.detail === 2) {
+                                      e.preventDefault()
+                                      cancelPendingSingle()
+                                      startBrush(slotDateStr, slot.slotIndex)
+                                    }
+                                  }}
+                                  onMouseEnter={() => {
+                                    continueBrush(slotDateStr, slot.slotIndex)
+                                  }}
+                                  onDoubleClick={(e) => e.preventDefault()}
+                                >
+                                  <div
+                                    className='d-flex align-items-center justify-content-center fw-bold'
+                                    style={{
+                                      height: '20px',
+                                      backgroundColor: isWorking ? '#ffc107' : '#e9ecef',
+                                      borderRadius: '2px',
+                                      border: isWorking ? '1px solid #ffb300' : '1px solid #ced4da',
+                                      color: isWorking ? '#212529' : '#6c757d',
+                                      fontSize: '11px',
+                                    }}
+                                  >
+                                    {isWorking ? 'W' : 'R'}
+                                  </div>
+                                </td>
+                              )
+                            })}
+
+                            <td className='text-center fw-bold align-middle'>
+                              {totalWorkingHrs.toFixed(1)}
+                            </td>
+                            <td className='text-center fw-bold align-middle'>
+                              {totalRestHrs.toFixed(1)}
+                            </td>
+                            <td className='text-center align-middle' style={{minWidth: '150px'}}>
+                              <input
+                                type='text'
+                                className='form-control form-control-sm text-center'
+                                placeholder='Add remarks (optional)'
+                                value={remarks.get(dateStr) || ''}
+                                onChange={(e) => onRemarksChange(remarksDate, e.target.value)}
+                                title={isDateLocked(dateStr) ? 'Approved day - remarks locked' : undefined}
+                                style={{
+                                  border: '1px solid #dee2e6',
+                                  borderRadius: '4px',
+                                  padding: '4px 8px',
+                                  fontSize: '12px',
+                                  backgroundColor: isDateLocked(dateStr) ? '#f3f3f3' : '#fff',
+                                }}
+                              />
+                            </td>
+
+                            {regulation === 'stcw' ? (
+                              <>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minRest24h.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minRest24h.value} Hrs
+                                  {allowExceptions && stcwDailyWaived && (
+                                    <span className='badge bg-info text-white ms-2'>Exception</span>
+                                  )}
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minRest7d.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minRest7d.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.maxInterval.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.maxInterval.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.maxPeriods.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.maxPeriods.value}
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minSingleRest.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minSingleRest.value} Hrs
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td
+                                  className='text-center align-middle'
+                                  style={mlcV!.maxWork24h.isViolation ? violationCellStyle : {}}
+                                >
+                                  {mlcV!.maxWork24h.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={mlcV!.maxWork7d.isViolation ? violationCellStyle : {}}
+                                >
+                                  {mlcV!.maxWork7d.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={
+                                    allowExceptions && mlcV!.minRest7d?.isViolation
+                                      ? violationCellStyle
+                                      : {}
+                                  }
+                                >
+                                  {allowExceptions ? `${mlcV!.minRest7d!.value} Hrs` : '--'}
+                                </td>
+                                <td className='text-center align-middle'>--</td>
+                                <td className='text-center align-middle'>--</td>
+                              </>
+                            )}
+                          </tr>
+                        )
+                      })
+
+                    ) : (
+                      dateRange.map((date) => {
+                        // // ... (your existing logic for calculations remains the same)
+                        // const selectedMember = filteredCrewMembers[0]
+                        // const dailyWorkSlotsBools = timeSlots.map((_, timeIndex) =>
+                        //   isWorkingHour(crewId || 0, date, timeIndex)
+                        // )
+                        // const totalWorkingHrs = dailyWorkSlotsBools.filter(Boolean).length * 0.5
+                        // const totalRestHrs = 24 - totalWorkingHrs
+                        // const violations = checkRestViolations(dailyWorkSlotsBools)
+                        // const dateStr = date.toISOString().split('T')[0]
+                        // const is7dWindowEnd = !!anchored7d[dateStr]
+                        // const violated7d = anchored7d[dateStr]?.violated ?? false
+                        // violations.minRest7d.isViolation = is7dWindowEnd && violated7d
+                        // const violationCellStyle = {backgroundColor: '#ff0000', color: '#ffffff'}
+                        // const isAnyViolation = Object.values(violations).some((v) => v.isViolation)
+                        const dateStr = date.toISOString().split('T')[0]
+                        const dailyWorkSlotsBools = timeSlots.map((_, i) =>
+                          isWorkingHour(crewId || 0, date, i)
+                        )
+
+                        const totalWorkingHrs = dailyWorkSlotsBools.filter(Boolean).length * 0.5
+                        const totalRestHrs = 24 - totalWorkingHrs
+
+                        // style & helpers
+                        const violationCellStyle = {backgroundColor: '#ff0000', color: '#ffffff'}
+
+                        // STCW branch (pattern-oriented, with optional daily 6h reductions up to 2 days/7d)
+                        let stcwV: ViolationSet | null = null
+                        let is7dWindowEnd = false
+                        let violated7d = false
+                        let stcwDailyWaived = false
+
+                        // MLC branch
+                        let mlcV: MLCViolationSet | null = null
+
+                        if (regulation === 'stcw') {
+                          stcwV = checkRestViolations(dailyWorkSlotsBools)
+
+                          // weekly min rest 77h only at the end of the anchored 7d in Update window (your existing behavior)
+                          is7dWindowEnd = !!anchored7d[dateStr]
+                          violated7d = anchored7d[dateStr]?.violated ?? false
+                          if (stcwV) stcwV.minRest7d.isViolation = is7dWindowEnd && violated7d
+
+                          // Exceptions: waive the daily 10h breach for up to 2 days (if 6h ≤ rest < 10h)
+                          if (
+                            allowExceptions &&
+                            stcwV.minRest24h.isViolation &&
+                            totalRestHrs >= 6 &&
+                            stcwExceptionDays.has(dateStr)
+                          ) {
+                            stcwV.minRest24h.isViolation = false
+                            stcwDailyWaived = true
+                          }
+                        } else {
+                          // MLC: need anchored weekly (rest & work) at anchored end only
+                          const weeklyEnd = anchored7d[dateStr] // carry totalRest
+                          const weeklyWorkEnd = anchored7dWork[dateStr]
+                          const sevenRest = weeklyEnd?.totalRest ?? null
+                          const sevenWork = weeklyWorkEnd?.totalWork ?? null
+
+                          // Only compute 7d rules at the window end (same UX as your STCW weekly flag)
+                          const wkWork = sevenWork ?? 0
+                          const wkRest = sevenRest ?? 168 - wkWork // fallback, should not hit when both maps in sync
+
+                          mlcV = checkMLCViolations(dailyWorkSlotsBools, wkWork, wkRest, allowExceptions)
+
+                          is7dWindowEnd = !!weeklyEnd && !!weeklyWorkEnd
+                        }
+
+                        // combine per-day + (when applicable) weekly checks for the date cell highlight
+                        const isAnyViolation =
+                          regulation === 'stcw'
+                            ? !!(
+                                stcwV &&
+                                (stcwV.minRest24h.isViolation ||
+                                  stcwV.minRest7d.isViolation ||
+                                  stcwV.maxInterval.isViolation ||
+                                  stcwV.maxPeriods.isViolation ||
+                                  stcwV.minSingleRest.isViolation)
+                              )
+                            : !!(
+                                mlcV &&
+                                (mlcV.maxWork24h.isViolation ||
+                                  // weekly rules only evaluated/shown at 7-day window end, matching your UX
+                                  (is7dWindowEnd && mlcV.maxWork7d.isViolation) ||
+                                  (allowExceptions &&
+                                    is7dWindowEnd &&
+                                    mlcV.minRest7d?.isViolation))
+                              )
+
+                        return (
+                          <tr key={date.toISOString()}>
+                            {/* Date cell */}
+                            <td
+                              className='fw-bold text-nowrap text-center align-middle'
+                              style={{
+                                position: 'sticky',
+                                left: 0,
+                                zIndex: 10,
+                                backgroundColor: '#fff',
+                                borderRight: '1px solid #dee2e6',
+                                ...(isAnyViolation && violationCellStyle),
+                              }}
+                            >
+                              {date.toLocaleDateString('en-GB', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                              })}
+                              {isDateLocked(dateStr) && (
+                                <span className='badge badge-sm bg-success ms-2'>Approved</span>
+                              )}
+                            </td>
+
+                            {/* Time slot cells */}
+                            {timeSlots.map((timeSlot, timeIndex) => {
+                              const isWorking = dailyWorkSlotsBools[timeIndex]
+                              const dateStr = date.toISOString().split('T')[0]
+
+                              return (
+                                <td
+                                  key={timeIndex}
+                                  className='text-center align-middle position-relative'
+                                  style={{
+                                    minWidth: '30px',
+                                    padding: '2px',
+                                    cursor: 'pointer',
+                                    backgroundColor: isWorking ? '#fff3cd' : '#f8f9fa',
+                                    borderLeft:
+                                      timeIndex % 2 === 0 ? '2px solid #dee2e6' : '1px solid #dee2e6',
+                                    userSelect: 'none',
+                                  }}
+                                  /* 1) single click -> delayed toggle (so double click can cancel) */
+                                  onClick={() => {
+                                    scheduleSingleToggle(dateStr, timeIndex)
+                                  }}
+                                  /* 2) second mouse down (detail===2) starts paint immediately */
+                                  onMouseDown={(e) => {
+                                    if (e.detail === 2) {
+                                      e.preventDefault()
+                                      cancelPendingSingle()
+                                      startBrush(dateStr, timeIndex)
+                                    }
+                                  }}
+                                  /* 3) drag horizontally within the same day row to paint */
+                                  onMouseEnter={() => {
+                                    continueBrush(dateStr, timeIndex)
+                                  }}
+                                  /* optional: avoid native dblclick selection flash */
+                                  onDoubleClick={(e) => e.preventDefault()}
+                                >
+                                  <div
+                                    className='d-flex align-items-center justify-content-center fw-bold'
+                                    style={{
+                                      height: '20px',
+                                      backgroundColor: isWorking ? '#ffc107' : '#e9ecef',
+                                      borderRadius: '2px',
+                                      border: isWorking ? '1px solid #ffb300' : '1px solid #ced4da',
+                                      color: isWorking ? '#212529' : '#6c757d',
+                                      fontSize: '11px',
+                                    }}
+                                  >
+                                    {isWorking ? 'W' : 'R'}
+                                  </div>
+                                </td>
+                              )
+                            })}
+
+                            {/* MODIFIED: Enforced text-center and align-middle on all data cells */}
+                            <td className='text-center fw-bold align-middle'>
+                              {totalWorkingHrs.toFixed(1)}
+                            </td>
+                            <td className='text-center fw-bold align-middle'>
+                              {totalRestHrs.toFixed(1)}
+                            </td>
+                            <td className='text-center align-middle' style={{minWidth: '150px'}}>
+                              <input
+                                type='text'
+                                className='form-control form-control-sm text-center'
+                                placeholder='Add remarks (optional)'
+                                value={remarks.get(dateStr) || ''}
+                                onChange={(e) => onRemarksChange(date, e.target.value)}
+                                // I am commenting this line below to let approved dates also remarks update unlike hours
+                                // disabled={isDateLocked(dateStr)}                 // optional: lock like slots
+                                title={isDateLocked(dateStr) ? 'Approved day — remarks locked' : undefined}
+                                style={{
+                                  border: '1px solid #dee2e6',
+                                  borderRadius: '4px',
+                                  padding: '4px 8px',
+                                  fontSize: '12px',
+                                  backgroundColor: isDateLocked(dateStr) ? '#f3f3f3' : '#fff',
+                                }}
+                              />
+                            </td>
+                            {/* Regulations cells */}
+                            {regulation === 'stcw' ? (
+                              <>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minRest24h.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minRest24h.value} Hrs
+                                  {allowExceptions && stcwDailyWaived && (
+                                    <span className='badge bg-info text-white ms-2'>Exception</span>
+                                  )}
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minRest7d.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minRest7d.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.maxInterval.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.maxInterval.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.maxPeriods.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.maxPeriods.value}
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={stcwV!.minSingleRest.isViolation ? violationCellStyle : {}}
+                                >
+                                  {stcwV!.minSingleRest.value} Hrs
+                                </td>
+                              </>
+                            ) : (
+                              <>
+                                <td
+                                  className='text-center align-middle'
+                                  style={mlcV!.maxWork24h.isViolation ? violationCellStyle : {}}
+                                >
+                                  {mlcV!.maxWork24h.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={
+                                    is7dWindowEnd && mlcV!.maxWork7d.isViolation
+                                      ? violationCellStyle
+                                      : {}
+                                  }
+                                >
+                                  {mlcV!.maxWork7d.value} Hrs
+                                </td>
+                                <td
+                                  className='text-center align-middle'
+                                  style={
+                                    allowExceptions && is7dWindowEnd && mlcV!.minRest7d?.isViolation
+                                      ? violationCellStyle
+                                      : {}
+                                  }
+                                >
+                                  {allowExceptions ? `${mlcV!.minRest7d!.value} Hrs` : '--'}
+                                </td>
+                                <td className='text-center align-middle'>--</td>
+                                <td className='text-center align-middle'>--</td>
+                              </>
+                            )}
+                          </tr>
+                        )
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1429,8 +2010,8 @@ const RestHour: FC = () => {
   }>({key: 'rank', direction: 'asc'})
   const [isModalVisible, setIsModalVisible] = useState(false)
   const [activeTab, setActiveTab] = useState('matrix-overview')
-const [regulation, setRegulation] = useState<Regulation>('stcw')
-const [allowExceptions, setAllowExceptions] = useState(true)
+  const [regulation, setRegulation] = useState<Regulation>('stcw')
+  const [allowExceptions, setAllowExceptions] = useState(true)
 const [fromDate, setFromDate] = useState<string>(() => {
   const d = new Date()
   d.setDate(d.getDate() - 30)           // last 30 days
@@ -1440,6 +2021,10 @@ const [toDate, setToDate] = useState<string>(() => new Date().toISOString().spli
   const [showTable, setShowTable] = React.useState(true)
   const [apiEntries, setApiEntries] = useState<any[]>([])
   const [vesselList, setVesselList] = useState<Vessel[]>([]) // ← new
+  // const rollingRefreshRequestedRef = React.useRef(false)
+  // const [rollingExceptionsData, setRollingExceptionsData] =
+  //   useState<RollingExceptionResponse | null>(null)
+  // const [rollingAsOf, setRollingAsOf] = useState<string | null>(null)
 
   // ===== Ranks (for dropdown + safe rendering) =====
   const [rankOptions, setRankOptions] = useState<{id: number; label: string}[]>([])
@@ -1452,7 +2037,7 @@ const [toDate, setToDate] = useState<string>(() => new Date().toISOString().spli
   const {currentUser} = useAuth()
   const rankId = currentUser?.rank?.id
   const roleId = currentUser?.role?.id
-    // Operator flavors:
+  // Operator flavors:
 // - No companyGroupAdminId => acts like Superadmin
 // - Has companyGroupAdminId => acts like Company Group Admin
 const isOperator = roleId === 6
@@ -1460,6 +2045,52 @@ const operatorActsLikeSuperadmin = isOperator && !currentUser?.companyGroupAdmin
 const operatorActsLikeGroupAdmin = isOperator && !!currentUser?.companyGroupAdminId
   const isMasterByName = (currentUser?.rank?.rank ?? '').toLowerCase().includes('master')
   const isCrewNonMaster = roleId === 4 && !isMasterByName
+
+  const floorToHalfHourLocal = (value: Date) => {
+    const next = new Date(value.getTime())
+    const minutes = next.getMinutes()
+    next.setMinutes(minutes < 30 ? 0 : 30, 0, 0)
+    return next
+  }
+
+  const formatMatrixRollingDateTime = (value: Date) =>
+    value.toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+
+  const [matrixRollingAnchor, setMatrixRollingAnchor] = useState<Date>(() =>
+    floorToHalfHourLocal(new Date())
+  )
+
+  useEffect(() => {
+    if (activeTab !== 'matrix-overview') return
+
+    const tick = () => setMatrixRollingAnchor(floorToHalfHourLocal(new Date()))
+    tick()
+
+    const now = new Date()
+    const minutes = now.getMinutes()
+    const seconds = now.getSeconds()
+    const millis = now.getMilliseconds()
+    const nextHalf = minutes < 30 ? 30 : 60
+    const msToNext = ((nextHalf - minutes) * 60 - seconds) * 1000 - millis
+
+    let intervalId: number | null = null
+    const timeoutId = window.setTimeout(() => {
+      tick()
+      intervalId = window.setInterval(tick, 30 * 60 * 1000)
+    }, Math.max(msToNext, 0))
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      if (intervalId !== null) window.clearInterval(intervalId)
+    }
+  }, [activeTab])
   // --- ADD: role-driven filter state ---
   const [filterCompanyGroupId, setFilterCompanyGroupId] = useState<number | ''>('')
   const [filterCompanyAdminId, setFilterCompanyAdminId] = useState<number | ''>('')
@@ -1514,6 +2145,7 @@ const LEFT_FREEZE_W = SR_STICKY_W + NAME_STICKY_W + RANK_STICKY_W + VESSEL_STICK
         compliant: boolean
         violationCount: number
         violations: string[] // array of violation descriptions
+        violationCodes?: string[]
         approved: boolean
         summaryId: number | null
         remarks: string
@@ -1680,6 +2312,7 @@ useEffect(() => {
 // REMOVE the other fetchCrewHours() useEffects
 useEffect(() => {
   if (!currentUser || !fromDate || !toDate) return
+  if (activeTab !== 'matrix-overview') return
   fetchCrewHours()
 }, [
   currentUser,              // refetch once auth lands
@@ -1688,7 +2321,8 @@ useEffect(() => {
   filterCompanyAdminId,
   filterVesselId,
   selectedCrew,              // name filter changes
-  regulation
+  regulation,
+  activeTab
 ])
 
   useEffect(() => {
@@ -1706,18 +2340,13 @@ useEffect(() => {
     }
   }, [filterCompanyGroupId, filterCompanyAdminId, subcompanies])
 
-  useEffect(() => {
-    if (fromDate && toDate) {
-      fetchRestHourEntries(fromDate, toDate)
-    }
-  }, [fromDate, toDate])
-
   type SummaryCell = {
     work: number
     rest: number
     compliant: boolean
     violationCount: number
     violations: string[]
+    violationCodes?: string[]
     approved?: boolean
     summaryId?: number | null
     remarks?: string                
@@ -1752,17 +2381,51 @@ useEffect(() => {
     })
   }
 
+  const matrixRollingCrewId = useMemo(() => {
+    if (isMasterByName && selectedCrew?.id) return selectedCrew.id
+    if (isCrewNonMaster) return crewId
+    return crewId ?? null
+  }, [isMasterByName, selectedCrew, isCrewNonMaster, crewId])
+
+  const matrixRollingVesselId = useMemo(() => {
+    if (!matrixRollingCrewId) return vesselId
+    const match = crew.find((c) => c.crewId === matrixRollingCrewId)
+    return match?.vessel?.id ?? vesselId
+  }, [crew, vesselId, matrixRollingCrewId])
+
+  const matrixRollingFromDate = useMemo(() => {
+    if (!fromDate) return ''
+    const d = new Date(fromDate + 'T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() - (ROLLING_WINDOW_DAYS - 1))
+    return d.toISOString().slice(0, 10)
+  }, [fromDate])
+
   const fetchRestHourEntries = async (fromDate: string, toDate: string) => {
     try {
       // Call your bulk save function (it loops through each date)
-      if (vesselId && crewId) {
-        const data = await getRestHourEntriesInRange(crewId, vesselId, fromDate, toDate)
+      if (matrixRollingVesselId && matrixRollingCrewId) {
+        const data = await getRestHourEntriesInRange(
+          matrixRollingCrewId,
+          matrixRollingVesselId,
+          fromDate,
+          toDate
+        )
         setApiEntries(data)
+      } else {
+        setApiEntries([])
       }
     } catch (error) {
       console.error('Save failed:', error)
+      setApiEntries([])
     }
   }
+
+  useEffect(() => {
+    if (fromDate && toDate) {
+      const start = matrixRollingFromDate || fromDate
+      fetchRestHourEntries(start, toDate)
+    }
+  }, [fromDate, toDate, matrixRollingFromDate, matrixRollingCrewId, matrixRollingVesselId])
 
   const handleRemarksChange = (date: Date, value: string) => {
     const dateString = date.toISOString().split('T')[0]
@@ -2030,6 +2693,41 @@ useEffect(() => {
     crewId,
   ])
 
+  // const selectedCrewRecord = useMemo(
+  //   () => crew.find((member) => member.crewId === selectedCrew?.id) ?? null,
+  //   [crew, selectedCrew]
+  // )
+
+  // const rollingCrewId = useMemo(() => {
+  //   if (roleId === 4 && !isMasterByName) return crewId ?? undefined
+  //   return selectedCrew?.id ?? undefined
+  // }, [roleId, isMasterByName, crewId, selectedCrew])
+  //
+  // const rollingVesselId = useMemo(() => {
+  //   if (typeof filterVesselId === 'number') return filterVesselId
+  //   if (selectedCrewRecord?.vessel?.id) return selectedCrewRecord.vessel.id
+  //   return currentUser?.vessel?.id ?? undefined
+  // }, [filterVesselId, selectedCrewRecord, currentUser])
+  //
+  // const rollingHasViolation = useMemo(() => {
+  //   const windows = rollingExceptionsData?.windows ?? []
+  //   return windows.some(
+  //     (window) => window.violated || (window.exceptions && window.exceptions.length > 0)
+  //   )
+  // }, [rollingExceptionsData])
+  //
+  // const rollingAsOfDateKey = useMemo(() => {
+  //   if (!rollingAsOf) return null
+  //   const date = new Date(rollingAsOf)
+  //   if (Number.isNaN(date.getTime())) return null
+  //   return date.toLocaleDateString('en-CA')
+  // }, [rollingAsOf])
+  //
+  // const rollingTooltip = useMemo(() => {
+  //   if (!rollingExceptionsData || !rollingHasViolation) return ''
+  //   return buildRollingTooltip(rollingExceptionsData, rollingAsOf)
+  // }, [rollingExceptionsData, rollingHasViolation, rollingAsOf])
+
 
 
   // SORT the role-scoped set that you actually render
@@ -2271,6 +2969,164 @@ const matrixAnchored7dWork = useMemo(() => {
 }, [filteredCrewMembers, dateKeys, weekEndIdxSet, hoursMap])
 
 
+  const matrixRollingViolations = useMemo(() => {
+    const out: Record<string, {violations: string[]; violationCodes: string[]}> = {}
+    if (!matrixRollingCrewId || !dateKeys.length || !apiEntries.length) return out
+
+    const workingSet = new Set<string>()
+    apiEntries.forEach((e: any) => {
+      const isWorking = Boolean(e?.isWorking ?? e?.working)
+      if (isWorking) workingSet.add(`${e.entryDate}-${e.slotIndex}`)
+    })
+
+    const toLocalDateKey = (value: Date) => {
+      const yyyy = value.getFullYear()
+      const mm = String(value.getMonth() + 1).padStart(2, '0')
+      const dd = String(value.getDate()).padStart(2, '0')
+      return `${yyyy}-${mm}-${dd}`
+    }
+
+    const anchorHours = matrixRollingAnchor.getHours()
+    const anchorMinutes = matrixRollingAnchor.getMinutes()
+    const dateIndex = new Map<string, number>()
+    const daily = new Map<string, {slots: boolean[]; work: number; rest: number}>()
+
+    dateKeys.forEach((dk, idx) => dateIndex.set(dk, idx))
+
+    dateKeys.forEach((dk) => {
+      const parts = dk.split('-').map(Number)
+      const yyyy = parts[0]
+      const mm = parts[1]
+      const dd = parts[2]
+      if (!yyyy || !mm || !dd) return
+      const end = new Date(yyyy, mm - 1, dd, anchorHours, anchorMinutes, 0, 0)
+      const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+
+      const slots: boolean[] = []
+      for (let i = 0; i < 48; i++) {
+        const slotStart = new Date(start.getTime() + i * 30 * 60 * 1000)
+        const slotDateKey = toLocalDateKey(slotStart)
+        const slotIndex =
+          slotStart.getHours() * 2 + (slotStart.getMinutes() >= 30 ? 1 : 0)
+        slots.push(workingSet.has(`${slotDateKey}-${slotIndex}`))
+      }
+
+      const workSlots = slots.filter(Boolean).length
+      const work = workSlots * 0.5
+      daily.set(dk, {slots, work, rest: 24 - work})
+    })
+
+    dateKeys.forEach((dk) => {
+      const day = daily.get(dk)
+      if (!day) return
+      const idx = dateIndex.get(dk)
+      if (idx === undefined) return
+
+      const startIdx = idx - (ROLLING_WINDOW_DAYS - 1)
+      let weekWork: number | null = null
+      let weekRest: number | null = null
+      let exceptionDays = new Set<string>()
+
+      if (startIdx >= 0) {
+        let sumWork = 0
+        let sumRest = 0
+        let allPresent = true
+        const exceptionCandidates: string[] = []
+
+        for (let i = startIdx; i <= idx; i++) {
+          const k = dateKeys[i]
+          const d = daily.get(k)
+          if (!d) {
+            allPresent = false
+            break
+          }
+          sumWork += d.work
+          sumRest += d.rest
+          if (regulation === 'stcw' && allowExceptions && d.rest >= 6 && d.rest < 10) {
+            exceptionCandidates.push(k)
+          }
+        }
+
+        if (allPresent) {
+          weekWork = sumWork
+          weekRest = sumRest
+          if (regulation === 'stcw' && allowExceptions) {
+            exceptionDays = new Set(exceptionCandidates.slice(0, 2))
+          }
+        }
+      }
+
+      const violations: string[] = []
+      const violationCodes: string[] = []
+
+      if (regulation === 'stcw') {
+        const v = checkRestViolations(day.slots)
+        if (weekRest !== null) v.minRest7d.isViolation = weekRest < 77
+
+        if (
+          allowExceptions &&
+          v.minRest24h.isViolation &&
+          day.rest >= 6 &&
+          exceptionDays.has(dk)
+        ) {
+          v.minRest24h.isViolation = false
+        }
+
+        if (v.minRest24h.isViolation) {
+          violations.push('Min Rest/24h < 10h')
+          violationCodes.push('STCW_MIN_REST_24H')
+        }
+        if (v.minRest7d.isViolation) {
+          violations.push('Min Rest/7d < 77h')
+          violationCodes.push('STCW_MIN_REST_7D')
+        }
+        if (v.maxInterval.isViolation) {
+          violations.push('Max interval between rests > 14h')
+          violationCodes.push('STCW_MAX_INTERVAL_BETWEEN_RESTS')
+        }
+        if (v.maxPeriods.isViolation) {
+          violations.push('More than 2 rest periods/day')
+          violationCodes.push('STCW_MAX_REST_PERIODS')
+        }
+        if (v.minSingleRest.isViolation) {
+          violations.push('Min single rest < 6h')
+          violationCodes.push('STCW_MIN_SINGLE_REST_BLOCK')
+        }
+      } else {
+        const weekWorkVal = weekWork ?? 0
+        const weekRestVal = weekRest ?? 0
+        const v = checkMLCViolations(day.slots, weekWorkVal, weekRestVal, allowExceptions)
+
+        if (weekWork === null) {
+          v.maxWork7d.isViolation = false
+        }
+        if (v.minRest7d && weekRest === null) {
+          v.minRest7d.isViolation = false
+        }
+
+        if (v.maxWork24h.isViolation) {
+          violations.push('Max Work/24h > 14h')
+          violationCodes.push('MLC_MAX_WORK_24H')
+        }
+        if (weekWork !== null && v.maxWork7d.isViolation) {
+          violations.push('Max Work/7d > 72h')
+          violationCodes.push('MLC_MAX_WORK_7D')
+        }
+        if (allowExceptions && weekRest !== null && v.minRest7d?.isViolation) {
+          violations.push('Min Rest/7d < 70h (exception floor)')
+          violationCodes.push('MLC_MIN_REST_7D_FLOOR70')
+        }
+      }
+
+      if (violations.length) {
+        out[`${matrixRollingCrewId}-${dk}`] = {violations, violationCodes}
+      }
+    })
+
+    return out
+  }, [matrixRollingCrewId, dateKeys, apiEntries, matrixRollingAnchor, regulation, allowExceptions, ROLLING_WINDOW_DAYS])
+
+
   const fetchCrewHours = async () => {
     try {
       if (!fromDate || !toDate) return
@@ -2288,7 +3144,8 @@ const matrixAnchored7dWork = useMemo(() => {
 const cId = selectedCrewId ?? (isCrew && !isMaster ? crewId : undefined)
 
 
-      const summaries = await getRestHoursSummary(fromDate, toDate, cId, vId, regulation)
+      // const summaries = await getRestHoursSummary(fromDate, toDate, cId, vId, regulation)
+      const summaries = await getRollingMatrixSummaries(fromDate, toDate, cId, vId, regulation)
 
       const map: Record<
         string,
@@ -2298,6 +3155,7 @@ const cId = selectedCrewId ?? (isCrew && !isMaster ? crewId : undefined)
           compliant: boolean
           violationCount: number
           violations: string[]
+          violationCodes?: string[]
           approved: boolean
           summaryId: number | null
           remarks: string
@@ -2305,12 +3163,24 @@ const cId = selectedCrewId ?? (isCrew && !isMaster ? crewId : undefined)
       > = {}
 
       summaries.forEach((entry: any) => {
+        const violationList = Array.isArray(entry.violations) ? entry.violations : []
+        const violationDescriptions = violationList
+          .map((v: any) => (typeof v === 'string' ? v : v?.description))
+          .filter((v: any) => typeof v === 'string' && v.trim().length > 0)
+        const violationCodes = violationList
+          .map((v: any) => (typeof v === 'string' ? '' : v?.ruleCode))
+          .filter((v: any) => typeof v === 'string' && v.trim().length > 0)
+        const rawCount = Number(entry.violationCount)
+        const violationCount =
+          Number.isFinite(rawCount) && rawCount > 0 ? rawCount : violationDescriptions.length
+
         map[`${entry.crewId}-${entry.summaryDate}`] = {
           work: Number(entry.totalWorkHours || 0),
           rest: Number(entry.totalRestHours || 0),
           compliant: !!entry.compliant,
-          violationCount: Number(entry.violationCount || 0),
-          violations: entry.violations ? entry.violations.map((v: any) => v.description) : [],
+          violationCount,
+          violations: violationDescriptions,
+          violationCodes,
           approved: !!entry.approved,
           summaryId: entry.id ?? null,
           remarks: entry.remarks ?? ''
@@ -2323,9 +3193,34 @@ const cId = selectedCrewId ?? (isCrew && !isMaster ? crewId : undefined)
     }
   }
 
+  // const refreshRollingExceptions = React.useCallback(async () => {
+  //   if (!rollingCrewId || !rollingVesselId) return
+  //   try {
+  //     const data = await getRollingExceptionsCompany(rollingCrewId, rollingVesselId)
+  //     setRollingExceptionsData(data)
+  //     setRollingAsOf(data?.asOf ?? null)
+  //   } catch (err) {
+  //     console.error('Rolling exceptions fetch failed:', err)
+  //   }
+  // }, [rollingCrewId, rollingVesselId])
+
+  const handleAfterSave = React.useCallback(async () => {
+    if (activeTab !== 'matrix-overview') return
+    await fetchCrewHours()
+  }, [activeTab, fetchCrewHours])
+
   useEffect(() => {
     console.log(hoursMap)
   }, [hoursMap])
+
+  // useEffect(() => {
+  //   if (activeTab !== 'matrix-overview') return
+  //   if (!rollingCrewId || !rollingVesselId) return
+  //   if (rollingRefreshRequestedRef.current) rollingRefreshRequestedRef.current = false
+  //   refreshRollingExceptions()
+  //   const intervalId = window.setInterval(refreshRollingExceptions, 60000)
+  //   return () => window.clearInterval(intervalId)
+  // }, [activeTab, rollingCrewId, rollingVesselId, refreshRollingExceptions])
 
   // REPLACE — build options from API lists; fallback to crew-derived if needed
   const companyGroupOptions = useMemo<CompanyGroupOpt[]>(() => {
@@ -2422,7 +3317,7 @@ const cId = selectedCrewId ?? (isCrew && !isMaster ? crewId : undefined)
   // ADD — which crew id Update tab is operating on
 const updateCrewId = isMasterByName && selectedCrew?.id ? selectedCrew.id : crewId
 
-// ADD — approved date set for the Update tab window (last 7 days)
+// ADD — approved date set for the Update tab window
 const approvedDatesForUpdateTab = useMemo(() => {
   const s = new Set<string>()
   if (!updateCrewId) return s
@@ -2436,7 +3331,7 @@ const approvedDatesForUpdateTab = useMemo(() => {
 
 
 useEffect(() => {
-  // Prefill Update tab remarks from summaries for the visible 7-day window
+  // Prefill Update tab remarks from summaries for the visible Update window
   if (!updateCrewId) return
   const m = new Map<string, string>()
   const keys = buildDateKeys(updateFromISO, updateToISO)
@@ -2619,21 +3514,7 @@ const generateDate = `Generated On - ${fmtDDMonYYYY(new Date().toISOString().spl
       const cell = hoursMap[`${c.crewId}-${d}`];
       const work = cell ? Number(cell.work || 0).toFixed(1) : '-';
       const rest = cell ? Number(cell.rest || 0).toFixed(1) : '-';
-      let vList = cell?.violations?.length ? cell.violations : [];
-const isLastDay = d === endISO;
-if (isLastDay) {
-  let description = '';
-  const wkRestInfo = matrixAnchored7d[`${c.crewId}-${d}`];
-  const wkWorkInfo = matrixAnchored7dWork?.[`${c.crewId}-${d}`];
-  if (regulation === 'stcw' && wkRestInfo && wkRestInfo.totalRest < 77) {
-    description = `Total rest in 7 days = ${wkRestInfo.totalRest.toFixed(2)} h; must be ≥ 77 h (STCW). [${weekStartISO}..${endISO}]`;
-  } else if (regulation === 'mlc' && wkWorkInfo && wkWorkInfo.totalWork > 72) {
-    description = `Total work in 7 days = ${wkWorkInfo.totalWork.toFixed(2)} h; must be ≤ 72 h (MLC). [${weekStartISO}..${endISO}]`;
-  }
-  if (description) {
-    vList = [...vList, description];
-  }
-}
+      const vList = cell?.violations?.length ? cell.violations : [];
       // bullet list & linebreaks to wrap properly
       const vText = vList.map((desc: string) => '- ' + desc.replace(/≤/g, '<=').replace(/≥/g, '>=').replace(/"/g, '"')).join('\n');
       let remarks = cell ? (cell.remarks || '-') : '-';
@@ -3024,6 +3905,7 @@ const resetRemarkEdits = () => {
                     />
                   </div>
                   )}
+
 
                   {/* Show Button - Updated with the new onClick handler */}
                   {/* <div className='col-md-auto'>
@@ -3416,10 +4298,41 @@ const resetRemarkEdits = () => {
                                     canApprove && entry?.summaryId && !entry?.approved
 
                                   // Tooltip text for violations
-                                  const tooltipText =
-                                    entry?.violationCount > 0 ? entry.violations.join('\n') : ''
-
-                                    const hasRemarks = !!entry?.remarks && String(entry.remarks).trim().length > 0
+                                  const hasRemarks = !!entry?.remarks && String(entry.remarks).trim().length > 0
+                                  const rollingKey = `${record.crewId}-${dateKey}`
+                                  const rollingInfo = matrixRollingViolations[rollingKey]
+                                  const rollingViolations = rollingInfo?.violations ?? []
+                                  const combinedViolations = Array.from(
+                                    new Set([...(entry?.violations ?? []), ...rollingViolations])
+                                  )
+                                  const hasViolation =
+                                    (entry?.violationCount ?? 0) > 0 ||
+                                    combinedViolations.length > 0 ||
+                                    entry?.compliant === false
+                                  const violationTooltip =
+                                    combinedViolations.length > 0
+                                      ? combinedViolations.join('\n')
+                                      : (entry?.violationCount ?? 0) > 0
+                                      ? `${entry?.violationCount} violation(s)`
+                                      : ''
+                                  const rollingWindowTooltip = (() => {
+                                    if (!matrixRollingAnchor) return ''
+                                    const [yyyy, mm, dd] = dateKey.split('-').map(Number)
+                                    if (!yyyy || !mm || !dd) return ''
+                                    const end = new Date(
+                                      yyyy,
+                                      mm - 1,
+                                      dd,
+                                      matrixRollingAnchor.getHours(),
+                                      matrixRollingAnchor.getMinutes(),
+                                      0,
+                                      0
+                                    )
+                                    const start = new Date(end.getTime() - 24 * 60 * 60 * 1000)
+                                    return `\nRolling 24h: ${formatMatrixRollingDateTime(
+                                      start
+                                    )} -> ${formatMatrixRollingDateTime(end)}`
+                                  })()
 
 
                                   cells.push(
@@ -3428,9 +4341,7 @@ const resetRemarkEdits = () => {
                                       className='text-center text-nowrap'
                                       // Show day-level tooltips from server + 7d overlay in title
                                       title={[
-                                        entry?.violationCount > 0
-                                          ? entry.violations.join('\n')
-                                          : '',
+                                        violationTooltip,
                                         matrixAnchored7d[`${record.crewId}-${dateKey}`]
                                           ? `\n7d window ${
                                               matrixAnchored7d[`${record.crewId}-${dateKey}`]
@@ -3441,7 +4352,8 @@ const resetRemarkEdits = () => {
                                                 .totalRest
                                             )}h`
                                           : '',
-                                          hasRemarks ? `\nRemarks: ${String(entry.remarks)}` : ''     
+                                          hasRemarks ? `\nRemarks: ${String(entry.remarks)}` : '',
+                                          rollingWindowTooltip
                                       ].join('')}
                                       style={{
                                         minWidth: weekEndIdxSet.has(colIndex)
@@ -3453,12 +4365,8 @@ const resetRemarkEdits = () => {
                                           (showApprove ? APPROVE_BTN_RESERVED : 0)
                                         }px 8px ${IS_WEEK_CHIP_RIGHT ? 8 : WEEK_CHIP_RESERVED}px`,
                                         position: 'relative',
-                                        // day-level background (server) OR weekly breach background (client)
-                                        backgroundColor:
-                                          entry?.violationCount > 0 ||
-                                          matrixAnchored7d[`${record.crewId}-${dateKey}`]?.violated
-                                            ? '#ffcccc'
-                                            : 'transparent',
+                                        // day-level background (server)
+                                        backgroundColor: hasViolation ? '#ffcccc' : 'transparent',
                                         // thick vertical line at 7d start for this column
                                         borderLeft: weekStartIdxSet.has(colIndex)
                                           ? '3px solid #9ec5fe'
@@ -3567,6 +4475,7 @@ const resetRemarkEdits = () => {
 {(() => {
   const wkRestInfo = matrixAnchored7d[`${record.crewId}-${dateKey}`];         // { windowStart, totalRest }
   const wkWorkInfo = matrixAnchored7dWork?.[`${record.crewId}-${dateKey}`];   // { windowStart, totalWork }
+  const violationCodes = entry?.violationCodes ?? []
 
   // only render chips on anchored week-end days we have data for
   const hasWeekEndData =
@@ -3577,8 +4486,12 @@ const resetRemarkEdits = () => {
   // breach logic by regulation
   const breached =
     regulation === 'stcw'
-      ? (wkRestInfo!.totalRest < 77)
-      : (wkWorkInfo!.totalWork > 72);
+      ? violationCodes.includes('STCW_MIN_REST_7D')
+      : violationCodes.some((code) =>
+          code === 'MLC_MAX_WORK_7D' ||
+          code === 'MLC_MIN_REST_7D' ||
+          code === 'MLC_MIN_REST_7D_FLOOR70'
+        );
 
   // chip text & tooltip title by regulation
   const chipText =
@@ -3843,7 +4756,7 @@ const resetRemarkEdits = () => {
                   remarks={remarks}
                   onRemarksChange={handleRemarksChange}
                   onLocalSummaryChange={patchMatrixSummary}
-                  onAfterSave={fetchCrewHours}
+                  onAfterSave={handleAfterSave}
                   approvedDates={approvedDatesForUpdateTab}
                   getSummaryId={(cid, dateISO) => hoursMap[`${cid}-${dateISO}`]?.summaryId ?? null}
                   dirtyRemarkDates={dirtyRemarkDates}

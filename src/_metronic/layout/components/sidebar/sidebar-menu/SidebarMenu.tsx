@@ -20,20 +20,30 @@ import SidebarMenuMain from './SidebarMenuMain'
 const SidebarMenu = () => {
   const { currentUser } = useAuth()
   const roleId = currentUser?.role?.id || 0
+  const roleType = currentUser?.role?.roleType || (currentUser as any)?.role?.roleName
+  const roleIdByType: Record<string, number> = {
+    SUPER_ADMIN: 1,
+    COMPANY_ADMIN: 2,
+    COMPANY_GROUP_ADMIN: 5,
+    CREW: 4,
+    OPERATOR: 6,
+  }
+  const effectiveRoleId = roleType && roleIdByType[roleType] ? roleIdByType[roleType] : roleId
+  const rankId = currentUser?.rank?.id || undefined
 
-  const [menus, setMenus] = React.useState(() => getMenusByRoleSync(roleId))
+  const [menus, setMenus] = React.useState(() => getMenusByRoleSync(effectiveRoleId, rankId))
 
   React.useEffect(() => {
     let alive = true
 
     const load = async () => {
-      if (roleId === 6) {
+      if (effectiveRoleId === 6) {
         // If you keep token in currentUser, pass it. Otherwise remove token field.
         const token = (currentUser as any)?.token || undefined
         const dynamicMenus = await getMenusByRoleAsync(6, { token })
         if (alive) setMenus(dynamicMenus)
       } else {
-        const staticMenus = getMenusByRoleSync(roleId)
+        const staticMenus = getMenusByRoleSync(effectiveRoleId, rankId)
         if (alive) setMenus(staticMenus)
       }
     }
@@ -42,7 +52,7 @@ const SidebarMenu = () => {
     return () => {
       alive = false
     }
-  }, [roleId, currentUser])
+  }, [effectiveRoleId, currentUser, rankId])
 
   return (
 

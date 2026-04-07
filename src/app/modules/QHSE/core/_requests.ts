@@ -281,30 +281,39 @@ export async function viewPdfDocumentRequest(token: string, documentId: number) 
   }
 }
 
+type DownloadPdfDocumentResult =
+  | { type: 'url'; url: string | null }
+  | { type: 'blob'; blob: Blob }
+
 // 2. Download document (returns URL from JSON)
-export async function downloadPdfDocumentRequest(token: string, documentId: number) {
-  const response = await fetch(
-    `${DOCUMENTS_API_URL}/download/${documentId}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  )
+export async function downloadPdfDocumentRequest(
+  token: string,
+  documentId: number
+): Promise<DownloadPdfDocumentResult> {
+  const response = await fetch(`${DOCUMENTS_API_URL}/download/${documentId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
 
   if (!response.ok) {
     throw new Error(`Download failed: ${response.status} ${response.statusText}`)
   }
 
-  const data = await response.json()
-  const url =
-    data.url ||
-    data.downloadUrl ||
-    data.fileUrl ||
-    (data.data && data.data.url) ||
-    null
+  const contentType = response.headers.get('content-type') || ''
+  if (contentType.includes('application/json')) {
+    const data = await response.json()
+    const url =
+      data.url ||
+      data.downloadUrl ||
+      data.fileUrl ||
+      (data.data && data.data.url) ||
+      null
+    return { type: 'url', url }
+  }
 
-  return url
+  const blob = await response.blob()
+  return { type: 'blob', blob }
 }
 
 export async function fetchDocumentsRequest(
@@ -323,6 +332,124 @@ export async function fetchDocumentsRequest(
   }
 
   return response.json()
+}
+
+export async function createQhseFolderRequest(
+  payload: {
+    companyGroupId: number
+    title: string
+    category?: string
+    createdBy?: string
+    scopeType?: string
+    vesselId?: number | null
+    crewId?: number | null
+  },
+  token: string,
+  parentId?: number | null
+): Promise<DocumentItem> {
+  const { data } = await axios.post(`${DOCUMENTS_API_URL}/folder`, payload, {
+    params: parentId ? { parentId } : undefined,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+  return data
+}
+
+export async function uploadQhseDocumentsRequest(
+  payload: {
+    companyGroupId: number
+    category?: string
+    createdBy?: string
+    scopeType?: string
+    vesselId?: number | null
+    crewId?: number | null
+    files: File[]
+  },
+  token: string,
+  parentId?: number | null
+): Promise<DocumentItem[]> {
+  const fd = new FormData()
+  const dto = {
+    companyGroupId: payload.companyGroupId,
+    category: payload.category,
+    createdBy: payload.createdBy,
+    scopeType: payload.scopeType,
+    vesselId: payload.vesselId ?? undefined,
+    crewId: payload.crewId ?? undefined,
+  }
+  fd.append('dto', new Blob([JSON.stringify(dto)], { type: 'application/json' }))
+  payload.files.forEach((file) => fd.append('files', file))
+
+  const { data } = await axios.post(`${DOCUMENTS_API_URL}/upload-multiple`, fd, {
+    params: parentId ? { parentId } : undefined,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      Authorization: `Bearer ${token}`,
+    },
+    transformRequest: (d) => d,
+    maxBodyLength: Infinity,
+  })
+  return data
+}
+
+export async function uploadQhseZipRequest(
+  payload: {
+    companyGroupId: number
+    category?: string
+    scopeType?: string
+    vesselId?: number | null
+    crewId?: number | null
+    file: File
+  },
+  token: string,
+  parentId?: number | null
+): Promise<DocumentItem[]> {
+  const fd = new FormData()
+  fd.append('file', payload.file)
+  if (payload.category) fd.append('category', payload.category)
+  if (payload.companyGroupId) fd.append('companyGroupId', String(payload.companyGroupId))
+  if (payload.scopeType) fd.append('scopeType', payload.scopeType)
+  if (payload.vesselId != null) fd.append('vesselId', String(payload.vesselId))
+  if (payload.crewId != null) fd.append('crewId', String(payload.crewId))
+
+  const { data } = await axios.post(`${DOCUMENTS_API_URL}/upload-zip`, fd, {
+    params: parentId ? { parentId } : undefined,
+    headers: {
+      'Content-Type': 'multipart/form-data',
+      Authorization: `Bearer ${token}`,
+    },
+    transformRequest: (d) => d,
+    maxBodyLength: Infinity,
+  })
+  return data
+}
+
+export async function updateQhseDocumentRequest(
+  documentId: number,
+  payload: Partial<DocumentItem>,
+  token: string,
+  parentId?: number | null
+): Promise<DocumentItem> {
+  const { data } = await axios.put(`${DOCUMENTS_API_URL}/${documentId}`, payload, {
+    params: parentId ? { parentId } : undefined,
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
+  return data
+}
+
+
+export async function deleteQhseDocumentRequest(
+  documentId: number,
+  token: string
+): Promise<void> {
+  await axios.delete(`${DOCUMENTS_API_URL}/${documentId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })
 }
 
 // ===============================

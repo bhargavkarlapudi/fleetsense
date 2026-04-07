@@ -41,7 +41,6 @@ export interface Crew {
   documents: CrewDocument[];
     availabilityStatus?: string;
     approvalStatus?: ApprovalStatus;
-
     // vessel summary (root‐level for PDF header)
   vesselName?: string;
   imoNumber?: string;

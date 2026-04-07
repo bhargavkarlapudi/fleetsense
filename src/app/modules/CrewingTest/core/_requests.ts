@@ -13,6 +13,7 @@ import { Voyage } from '../../operations/core/_models';
 import { Rank } from "./_models";
 import { Company, CompanyAdmin, HistoryRecord } from "./_models";
 import {CrewFlagDocument, FlagCountry, FlagDocType} from './_models'
+import { RollingExceptionResponse, RollingMatrixResponse } from './_models'
 
 const API_URL = process.env.REACT_APP_API_URL 
 const CREW_API_URL = `${API_URL}/crew`;
@@ -599,6 +600,25 @@ const jsonHeaders = {'Content-Type': 'application/json'};
 // narrow string type for safety
 export type Regulation = 'stcw' | 'mlc';
 
+export interface RestHourViolation {
+  description?: string
+  ruleCode?: string
+  standard?: string
+}
+
+export interface RestHourDailySummary {
+  crewId: number
+  vesselId: number
+  summaryDate: string
+  totalWorkHours: number
+  totalRestHours: number
+  compliant?: boolean
+  isCompliant?: boolean
+  violationCount?: number
+  violations?: RestHourViolation[]
+  exceptions?: { description?: string }[]
+  remarks?: string | null
+}
 
 export interface RestHourEntry {
   slotIndex: number
@@ -658,6 +678,67 @@ export async function deleteWorkingSlots(
   } catch (error: any) {
     console.error('❌ Delete-slots failed:', error);
     throw new Error(error.response?.data?.message || `Delete-slots failed for ${entryDate}`);
+  }
+}
+
+export async function getDailySummary(
+  crewId: number,
+  vesselId: number,
+  date: string
+): Promise<RestHourDailySummary> {
+  try {
+    const { data } = await axios.get(
+      `${REST_HOURS_API_URL}/summaries`,
+      { params: { crewId, vesselId, date } }
+    )
+    return data
+  } catch (error: any) {
+    console.error('❌ Error fetching daily summary:', error)
+    throw new Error(error.response?.data?.message || 'Failed fetching daily summary')
+  }
+}
+
+export async function getRollingExceptionsCompany(
+  crewId: number,
+  vesselId: number,
+  asOf?: string
+): Promise<RollingExceptionResponse> {
+  try {
+    const { data } = await axios.get(
+      `${REST_HOURS_API_URL}/entries/rolling-exceptions/company`,
+      { params: { crewId, vesselId, asOf: asOf || undefined } }
+    )
+    return data
+  } catch (error: any) {
+    console.error('❌ Error fetching rolling exceptions:', error)
+    throw new Error(error.response?.data?.message || 'Failed fetching rolling exceptions')
+  }
+}
+
+export async function getRollingMatrixSummaries(
+  start: string,
+  end: string,
+  crewId?: number | null,
+  vesselId?: number | null,
+  regulation: Regulation = 'stcw'
+): Promise<any[]> {
+  try {
+    const { data } = await axios.get<RollingMatrixResponse>(
+      `${REST_HOURS_API_URL}/summaries/rolling-range`,
+      {
+        params: {
+          start,
+          end,
+          crewId: crewId ?? undefined,
+          vesselId: vesselId ?? undefined,
+          regulation,
+        },
+      }
+    )
+    return data?.summaries ?? []
+  } catch (error: any) {
+    console.error('❌ Error fetching rolling matrix summaries:', error)
+    throw new Error(error.response?.data?.message || 'Failed fetching rolling matrix summaries')
   }
 }
 

@@ -4,6 +4,7 @@ import { Voyage } from '../../operations/core/_models';
 import { Rank } from "./_models";
 import { Company, CompanyAdmin, HistoryRecord  } from "./_models";
 
+
 const API_URL = process.env.REACT_APP_API_URL
 const CREW_API_URL = `${API_URL}/crew`;
 const RANKS_API = `${API_URL}/ranks`;
@@ -300,7 +301,6 @@ export const getRanksforList = async (): Promise<Rank[]> => {
   const res = await axios.get<Rank[]>(RANKS_API);
   return res.data;
 };
-
 /**
  * (optional) Fetch a single rank by id.
  */
